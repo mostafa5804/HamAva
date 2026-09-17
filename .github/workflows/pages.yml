@@ -33,10 +33,12 @@ jobs:
           node-version: 24
           cache: pnpm
 
-      # Pages must already be enabled with "Source: GitHub Actions"; this step
-      # reports that clearly before anything is built.
+      # `enablement: true` flips Settings → Pages → Source to "GitHub Actions"
+      # automatically, so the first run does not fail with "Pages not enabled".
       - name: Configure GitHub Pages
         uses: actions/configure-pages@v5
+        with:
+          enablement: true
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
