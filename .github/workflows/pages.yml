@@ -1,0 +1,80 @@
+name: Deploy to GitHub Pages
+
+# The app runs entirely in the browser, so GitHub Pages only has to serve static
+# files. `pnpm build:pages` writes them to `out/`; nothing here needs a server,
+# a database or a Gemini key.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Pages must already be enabled with "Source: GitHub Actions"; this step
+      # reports that clearly before anything is built.
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run the test suite
+        run: pnpm test
+
+      - name: Lint
+        run: pnpm lint
+
+      # A `<user>.github.io` repository and a custom domain serve the app from
+      # the root; a project repository serves it from `/<repository>/`.
+      - name: Resolve the Pages base path
+        id: base
+        run: |
+          if [ "${{ github.event.repository.name }}" = "${{ github.repository_owner }}.github.io" ]; then
+            echo "path=" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=/${{ github.event.repository.name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build the static export
+        run: pnpm build:pages
+        env:
+          HAMAVA_BASE_PATH: ${{ steps.base.outputs.path }}
+
+      - name: Upload the static export
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

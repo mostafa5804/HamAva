@@ -1,0 +1,4 @@
+# Personal hosting identity and workspace instructions are not source deliverables.
+/.openai export-ignore
+/AGENTS.md export-ignore
+/examples export-ignore
