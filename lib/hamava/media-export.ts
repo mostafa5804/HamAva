@@ -4,9 +4,9 @@ import {
   mixClipsOnTimeline,
   monoFromAudioBuffer,
   type TimelineClip,
-} from './audio-mix';
+} from './audio-mix.ts';
 
-export { downloadName } from './audio-mix';
+export { downloadName } from './audio-mix.ts';
 
 export function saveBlob(blob: Blob, filename: string): void {
   const url = URL.createObjectURL(blob);
@@ -42,7 +42,8 @@ export async function renderDubbingTrack(request: DubTrackRequest): Promise<{ bl
     request.signal?.throwIfAborted();
     const clip = request.clips[index];
     try {
-      const response = await fetch(clip.url);
+      const response = await fetch(clip.url, { signal: request.signal });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
       const buffer = await request.decodeAudio(await response.arrayBuffer());
       timeline.push({
         start: clip.start,
@@ -50,11 +51,13 @@ export async function renderDubbingTrack(request: DubTrackRequest): Promise<{ bl
         samples: monoFromAudioBuffer(buffer),
         sampleRate: buffer.sampleRate,
       });
-    } catch {
-      // One unreadable clip must not lose the rest of the download.
+    } catch (error) {
+      request.signal?.throwIfAborted();
+      throw new Error(`خواندن بخش ${index + 1} دوبله ممکن نشد؛ فایل ناقص صادر نشد.`, { cause: error });
     }
     request.onProgress?.(((index + 1) / Math.max(1, request.clips.length)) * 100);
   }
+  request.signal?.throwIfAborted();
   if (!timeline.length) throw new Error('صدای دوبله‌ای برای دانلود آماده نشده است. اول دوبله را آماده کن.');
   const samples = mixClipsOnTimeline(timeline, { duration: request.duration, sampleRate: rate });
   return { blob: encodeWav(samples, rate), seconds: samples.length / rate };

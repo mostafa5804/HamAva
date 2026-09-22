@@ -39,10 +39,12 @@ export function mixClipsOnTimeline(clips: TimelineClip[], options: MixOptions): 
       : exportSampleRate;
   const gap = Math.max(0, options.clipGapSeconds ?? 0.05);
   const duration = Number.isFinite(options.duration) && options.duration > 0 ? options.duration : 0;
-  const longest = clips.reduce((end, clip) => Math.max(end, clip.end), 0);
+  const valid = clips.filter(clip => Number.isFinite(clip.start) && Number.isFinite(clip.end) && clip.start >= 0 && clip.end > clip.start);
+  const longest = valid.reduce((end, clip) => Math.max(end, clip.end), 0);
   const length = Math.ceil(Math.max(duration, longest) * rate);
+  if (length > rate * 60 * 60) throw new Error('خروجی صوتی بیش از یک ساعت است؛ برای جلوگیری از پرشدن حافظه، فایل را به بخش‌های کوتاه‌تر تقسیم کن.');
   const output = new Float32Array(Math.max(1, length));
-  const ordered = [...clips]
+  const ordered = [...valid]
     .filter(clip => clip.samples.length > 0 && clip.end > clip.start)
     .sort((a, b) => a.start - b.start);
   for (const clip of ordered) {
@@ -52,7 +54,7 @@ export function mixClipsOnTimeline(clips: TimelineClip[], options: MixOptions): 
     for (let index = 0; index < fitted.length; index++) {
       const at = from + index;
       if (at >= output.length) break;
-      // Overlapping clips are summed with a soft limiter instead of clipping.
+      // Overlapping clips are summed and limited to the PCM range.
       output[at] = softLimit(output[at] + fitted[index]);
     }
   }
@@ -70,8 +72,10 @@ export function fitToWindow(
   const target = Math.max(1, windowSeconds * targetRate);
   const out = new Float32Array(Math.ceil(target));
   if (!samples.length) return out;
+  const naturalLength = Math.max(1, Math.round(samples.length * targetRate / source));
+  const natural = new Float32Array(naturalLength);
   const ratio = source / targetRate;
-  for (let index = 0; index < out.length; index++) {
+  for (let index = 0; index < natural.length; index++) {
     const position = index * ratio;
     const left = Math.floor(position);
     const right = Math.min(samples.length - 1, left + 1);
@@ -79,15 +83,50 @@ export function fitToWindow(
     if (left >= samples.length) break;
     const a = Number(samples[left]) || 0;
     const b = Number(samples[right]) || 0;
-    out[index] = a + (b - a) * fraction;
+    natural[index] = a + (b - a) * fraction;
   }
-  return out;
+  return stretchPCM(natural, out.length, targetRate);
+}
+
+/** Waveform-similarity overlap/add: fit speech without resampling its pitch. */
+export function stretchPCM(input: Float32Array, length: number, rate: number): Float32Array {
+  const output = new Float32Array(length);
+  const frame = Math.max(4, Math.round(rate * .04 / 2) * 2);
+  const hop = frame / 2, search = Math.round(rate * .01);
+  if (input.length === length) return input.slice();
+  if (input.length < frame || length < frame) {
+    // Tiny clips contain no complete speech window; retain all samples.
+    for (let i = 0; i < length; i++) output[i] = input[Math.min(input.length - 1, Math.floor(i * input.length / length))] || 0;
+    return output;
+  }
+  output.set(input.subarray(0, frame));
+  let previous = 0;
+  for (let at = hop; at < length; at += hop) {
+    const expected = Math.min(input.length - frame, Math.round(at * input.length / length));
+    let best = expected, score = -Infinity;
+    const lo = Math.max(previous, expected - search), hi = Math.min(input.length - frame, expected + search);
+    for (let candidate = lo; candidate <= hi; candidate += 4) {
+      let dot = 0, aa = 0, bb = 0;
+      for (let j = 0; j < hop && at + j < length; j += 8) {
+        const a = output[at + j], b = input[candidate + j];
+        dot += a * b; aa += a * a; bb += b * b;
+      }
+      const correlation = dot / Math.sqrt(aa * bb + 1e-12) - Math.abs(candidate - expected) * 1e-7;
+      if (correlation > score) { score = correlation; best = candidate; }
+    }
+    // Include the end of the utterance, even when heavily compressed.
+    if (at + frame >= length) best = Math.max(0, input.length - (length - at));
+    for (let j = 0; j < frame && at + j < length && best + j < input.length; j++) {
+      const blend = j < hop ? j / hop : 1;
+      output[at + j] = output[at + j] * (1 - blend) + input[best + j] * blend;
+    }
+    previous = best;
+  }
+  return output;
 }
 
 function softLimit(value: number): number {
-  if (value > 1) return 1 - 1 / (1 + (value - 1) * 4);
-  if (value < -1) return -1 + 1 / (1 + (-value - 1) * 4);
-  return value;
+  return Math.max(-1, Math.min(1, value));
 }
 
 /** Mono mixdown of a decoded buffer, ready for the exporter. */
