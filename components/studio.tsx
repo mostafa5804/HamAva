@@ -22,6 +22,7 @@ import { exportCaptions } from '@/lib/hamava/shared.js';
 
 type Media = { kind:SourceKind; url:string; name:string; id?:string; revision:number; identity:string };
 type InstallPrompt = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>};
+const APP_VERSION = '۱.۰.۴';
 
 function Range({label,value,min=0,max=100,step=1,suffix='٪',onChange,icon}:{label:string;value:number;min?:number;max?:number;step?:number;suffix?:string;onChange:(v:number)=>void;icon?:React.ReactNode}) {
   const id=label.replaceAll(' ','-');
@@ -353,7 +354,7 @@ export default function Studio(){
     onAction:()=>{if(translationEnabled){stopLive();return;}void (ready?togglePlay():startTranslation());},onCancel:cancelPreparation,partialReady,onPartialAction:()=>{void togglePlay();},
   };
   return <div className="app-shell">
-    <header className="app-header"><a className="brand" href="./" aria-label="هم‌آوا، صفحه اصلی"><img src="favicon.svg" alt="" width="42" height="42"/><div><h1>هم‌آوا<span>نسخه ۱.۰.۳</span></h1><p>ویدیو به زبان تو</p></div></a><div className="header-actions"><button className="icon-button install-button" onClick={install} title="افزودن به صفحه اصلی" aria-label="افزودن به صفحه اصلی"><Smartphone size={20}/></button><button className="settings-button" onClick={()=>{setSheet(true);setKeyNote('');}}><Settings2 size={19}/><span>تنظیمات</span></button></div></header>
+    <header className="app-header"><a className="brand" href="./" aria-label="هم‌آوا، صفحه اصلی"><img src="favicon.svg" alt="" width="42" height="42"/><div><h1>هم‌آوا<span>نسخه {APP_VERSION}</span></h1><p>ویدیو به زبان تو</p></div></a><div className="header-actions"><button className="icon-button install-button" onClick={install} title="افزودن به صفحه اصلی" aria-label="افزودن به صفحه اصلی"><Smartphone size={20}/></button><button className="settings-button" onClick={()=>{setSheet(true);setKeyNote('');}}><Settings2 size={19}/><span>تنظیمات</span></button></div></header>
     <main className="workspace">
       <section className="source-panel card" aria-labelledby="source-title"><div className="section-heading"><h2 id="source-title">چی تماشا می‌کنی؟</h2><span className="language-badge">فارسی <span>FA</span></span></div>
         <Tabs dir="rtl" value={tab} onValueChange={v=>setTab(v as SourceKind)}><TabsList className="source-tabs"><TabsTrigger value="file"><Upload/>فایل من</TabsTrigger><TabsTrigger value="url"><Link2/>لینک مستقیم</TabsTrigger><TabsTrigger value="youtube"><Youtube/>یوتیوب</TabsTrigger></TabsList>
@@ -394,7 +395,7 @@ export default function Studio(){
         <button className="subtitle-shortcut card" onClick={()=>setSheet(true)}><span className="subtitle-icon"><Subtitles size={22}/></span><span><strong>زیرنویس به سلیقه تو</strong><small>اندازه، رنگ و نمایش دوزبانه</small></span><ChevronLeft size={18}/></button>
       </aside>
     </main>
-    <footer className="app-footer"><span>هم‌آوا <b>·</b> نسخه ۱.۰.۳</span><span>بدون سقف داخلی؛ هزینه و سهمیه تابع Gemini است.</span></footer>
+    <footer className="app-footer"><span>هم‌آوا <b>·</b> نسخه {APP_VERSION}</span><span>بدون سقف داخلی؛ هزینه و سهمیه تابع Gemini است.</span></footer>
     <section className="mobile-translation-dock" aria-label="کنترل سریع ترجمه"><TranslationControls {...translationControls}/></section>
 
     <Sheet open={sheet} onOpenChange={setSheet}><SheetContent side="left" showCloseButton={false} className="settings-sheet" dir="rtl"><SheetHeader><div className="section-heading"><SheetTitle>تنظیمات هم‌آوا</SheetTitle><SheetClose className="icon-button" aria-label="بستن تنظیمات"><X size={21}/></SheetClose></div><SheetDescription>تنظیمات مخصوص همین مرورگر</SheetDescription></SheetHeader>
