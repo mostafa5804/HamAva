@@ -1,15 +1,15 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaults,youtubeId,directUrl,sanitizeSettings,errorText } from '../lib/hamava/types.ts';
+import { defaults,youtubeId,directUrl,sanitizeSettings,errorText,isValidApiKey } from '../lib/hamava/types.ts';
 import { validateCues,groupCues,pcmWave,translateYoutube,prepareDubbing } from '../lib/hamava/gemini.ts';
 import { appAsset } from '../lib/hamava/assets.ts';
 
 const cue={start:0,end:2,source:'Hello',translation:'سلام',speaker:'a',voice:'female'};
 const translationOptions={id:'9hE5-98ZeCg',duration:10,key:'dummy',settings:defaults,onProgress:()=>{}};
-function assertBrowserHeaders(url,options){
+function assertBrowserHeaders(url,options,key='dummy'){
   assert.equal(url,'https://generativelanguage.googleapis.com/v1beta/interactions');
   const headers=new Headers(options.headers);
-  assert.equal(headers.get('x-goog-api-key'),'dummy');
+  assert.equal(headers.get('x-goog-api-key'),key);
   assert.equal(headers.get('content-type'),'application/json');
   assert.deepEqual([...headers.keys()].sort(),['content-type','x-goog-api-key']);
   assert.equal(headers.has('api-revision'),false,'Api-Revision causes Google to reject the browser CORS preflight');
@@ -22,10 +22,19 @@ test('source URLs reject lookalikes and unsafe schemes',()=>{
   assert.throws(()=>directUrl('https://youtube.com/watch?v=9hE5-98ZeCg'));
   assert.equal(directUrl('https://example.org/movie.mp4'),'https://example.org/movie.mp4');
 });
+test('API keys accept new AQ. authorization format and legacy keys as opaque tokens',()=>{
+  assert.equal(isValidApiKey('AQ.Ab8o-example.auth-key-2026'),true);
+  assert.equal(isValidApiKey('AIzaSy-example_legacy-key-2026'),true);
+  assert.equal(isValidApiKey('too-short'),false);
+  assert.equal(isValidApiKey('AQ. key-with-space-123'),false);
+  assert.equal(isValidApiKey('AQ.key\nwith-line-break'),false);
+  assert.equal(isValidApiKey('AQ.'+'a'.repeat(2050)),false);
+});
 test('settings sanitize persisted data and redact key material',()=>{
   const s=sanitizeSettings({originalVolume:400,dubVolume:-10,voice:'nonsense',model:'<script>',captionSize:NaN});
   assert.equal(s.originalVolume,100);assert.equal(s.dubVolume,0);assert.equal(s.voice,'auto');assert.equal(s.model,defaults.model);assert.equal(s.captionSize,22);
   assert.ok(!errorText(new Error('bad secret-dummy-key'), 'secret-dummy-key').includes('secret-dummy-key'));
+  assert.ok(!errorText(new Error('invalid AQ.Ab8o-sensitive-auth-key-2026')).includes('AQ.Ab8o-sensitive-auth-key-2026'));
 });
 test('incomplete or wrongly timed transcript is never marked ready',()=>{
   assert.throws(()=>validateCues({complete:false,cues:[cue]},0,240));
@@ -47,10 +56,11 @@ test('PCM becomes a valid mono 24kHz WAV with correct duration',async()=>{
   const wav=pcmWave(Buffer.alloc(48000).toString('base64'));assert.equal(wav.duration,1);
   const bytes=await wav.blob.arrayBuffer();assert.equal(Buffer.from(bytes).subarray(0,4).toString(),'RIFF');assert.equal(new DataView(bytes).getUint32(24,true),24000);assert.equal(bytes.byteLength,48044);
 });
-test('YouTube preparation sends a valid public URI without unsupported clipping fields',async()=>{
+test('YouTube preparation sends a valid public URI and the new AQ key in the Google auth header',async()=>{
   const fetch=globalThis.fetch;const calls=[];
-  globalThis.fetch=async(url,options)=>{assertBrowserHeaders(url,options);const body=JSON.parse(options.body);calls.push(body);return Response.json({status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({complete:true,cues:[cue]})}]}]});};
-  try{const cues=await translateYoutube({id:'9hE5-98ZeCg',duration:260,key:'dummy',settings:defaults,signal:new AbortController().signal,onProgress:()=>{}});assert.equal(calls.length,1);assert.equal(calls[0].store,false);assert.equal(calls[0].response_format.mime_type,'application/json');assert.deepEqual(calls[0].input[0],{type:'video',uri:'https://www.youtube.com/watch?v=9hE5-98ZeCg'});assert.equal(calls[0].input[0].processing,undefined);assert.equal(cues[0].start,0);}finally{globalThis.fetch=fetch;}
+  const key='AQ.Ab8o-test-only-fake-auth-key-2026';
+  globalThis.fetch=async(url,options)=>{assertBrowserHeaders(url,options,key);const body=JSON.parse(options.body);calls.push(body);return Response.json({status:'completed',steps:[{type:'model_output',content:[{type:'text',text:JSON.stringify({complete:true,cues:[cue]})}]}]});};
+  try{const cues=await translateYoutube({id:'9hE5-98ZeCg',duration:260,key,settings:defaults,signal:new AbortController().signal,onProgress:()=>{}});assert.equal(calls.length,1);assert.equal(calls[0].store,false);assert.equal(calls[0].response_format.mime_type,'application/json');assert.deepEqual(calls[0].input[0],{type:'video',uri:'https://www.youtube.com/watch?v=9hE5-98ZeCg'});assert.equal(calls[0].input[0].processing,undefined);assert.equal(cues[0].start,0);}finally{globalThis.fetch=fetch;}
 });
 test('a completed YouTube response is streamed to the caller once',async()=>{
   const fetch=globalThis.fetch;const chunks=[];let calls=0;

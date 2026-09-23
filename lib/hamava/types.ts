@@ -6,6 +6,11 @@ export interface Settings {
   captionPosition: 'bottom' | 'top'; captionColor: string; captionOffset: number;
   voice: 'auto' | 'female' | 'male'; model: string; videoModel: string; ttsModel: string;
 }
+export function isValidApiKey(value: string): boolean {
+  // Google auth keys use a different prefix and can contain punctuation (for example, `AQ.`).
+  // Treat a key as an opaque printable token; the API verifies whether it is real and enabled.
+  return value.length >= 12 && value.length <= 2048 && /^[\x21-\x7e]+$/.test(value);
+}
 export interface Cue { start: number; end: number; source: string; translation: string; speaker: string; voice: 'female' | 'male' | 'unknown'; }
 export interface AudioClip { start: number; end: number; url: string; duration: number; }
 export const defaults: Settings = {
@@ -44,7 +49,7 @@ export function formatTime(n: number) { const s = Math.max(0,Math.floor(n || 0))
 export function errorText(e: unknown, key = '') {
   let message = String(e instanceof Error ? e.message : e);
   if (key) message = message.split(key).join('••••');
-  message = message.replace(/AIza[\w-]+/g,'••••').replace(/([?&]key=)[^\s&"']+/gi,'$1••••');
+  message = message.replace(/\bAQ\.[A-Za-z0-9._~-]{8,}/g,'••••').replace(/AIza[\w-]+/g,'••••').replace(/([?&]key=)[^\s&"']+/gi,'$1••••');
   const info = e as {name?: string; kind?: string; phase?: string; httpStatus?: number} | null;
   if (info?.name === 'GeminiRequestError') {
     const phase = info.phase || 'ترجمه';

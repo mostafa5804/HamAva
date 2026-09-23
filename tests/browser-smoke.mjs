@@ -10,7 +10,7 @@ const rate=24000,len=rate*3,wav=Buffer.alloc(44+len*2);wav.write('RIFF');wav.wri
 const pcm=wav.subarray(44).toString('base64');let calls=0;
 try{
  const context=await browser.newContext({viewport:{width:1150,height:900},acceptDownloads:true});
- await context.addInitScript(()=>{if(!localStorage.getItem('hamava.web.key'))localStorage.setItem('hamava.web.key','dummy-test-key-not-real-1234');if(!localStorage.getItem('hamava.web.settings'))localStorage.setItem('hamava.web.settings',JSON.stringify({mode:'both',dubVolume:0}));});
+ await context.addInitScript(()=>{if(!localStorage.getItem('hamava.web.key'))localStorage.setItem('hamava.web.key','AQ.Ab8o-test-only-fake-auth-key-2026');if(!localStorage.getItem('hamava.web.settings'))localStorage.setItem('hamava.web.settings',JSON.stringify({mode:'both',dubVolume:0}));});
  await context.route('https://generativelanguage.googleapis.com/**',async route=>{
    calls++;const body=route.request().postDataJSON();
    const content=body.model.includes('tts')?[{type:'audio',mime_type:'audio/l16',sample_rate:24000,channels:1,data:pcm}]:[{type:'text',text:JSON.stringify({complete:true,cues:[{start:0,end:3,source:'Hello world',translation:'سلام دنیا',speaker:'a',voice:'female'}]})}];
