@@ -17,7 +17,7 @@ try{
    await route.fulfill({json:{status:'completed',steps:[{type:'model_output',content}]}});
  });
  const page=await context.newPage(),errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('ERROR',e.message);});page.on('console',m=>{if(m.type()==='error')console.log('CONSOLE',m.text().slice(0,500));});
- await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۴',{exact:false}).first().waitFor();
+ await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۴',{exact:false}).first().waitFor();assert.equal(await page.getByRole('link',{name:'کد منبع هم‌آوا در GitHub'}).getAttribute('href'),'https://github.com/mostafa5804/HamAva');
  fs.writeFileSync(root+'/qa-source.wav',wav);await page.locator('input[type=file]').setInputFiles(root+'/qa-source.wav');
  await page.waitForFunction(()=>document.querySelector('video').readyState>=1).catch(async e=>{console.log(await page.locator('video').evaluate(v=>({src:v.src,state:v.readyState,error:v.error?.message})),await page.locator('body').innerText());throw e;});
  await page.locator('.desktop-translation-controls button').filter({hasText:'شروع ترجمه'}).click();
