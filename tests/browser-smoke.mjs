@@ -10,7 +10,7 @@ const rate=24000,len=rate*3,wav=Buffer.alloc(44+len*2);wav.write('RIFF');wav.wri
 const pcm=wav.subarray(44).toString('base64');let calls=0;
 try{
  const context=await browser.newContext({viewport:{width:1150,height:900},acceptDownloads:true});
- await context.addInitScript(()=>{if(!localStorage.getItem('hamava.web.key'))localStorage.setItem('hamava.web.key','AQ.Ab8o-test-only-fake-auth-key-2026');if(!localStorage.getItem('hamava.web.settings'))localStorage.setItem('hamava.web.settings',JSON.stringify({mode:'both',dubVolume:0}));window.__hamavaBufferStarts=0;const start=AudioBufferSourceNode.prototype.start;AudioBufferSourceNode.prototype.start=function(...args){window.__hamavaBufferStarts++;return start.apply(this,args);};});
+ await context.addInitScript(()=>{if(!localStorage.getItem('hamava.web.key'))localStorage.setItem('hamava.web.key','AQ.Ab8o-test-only-fake-auth-key-2026');if(!localStorage.getItem('hamava.web.settings'))localStorage.setItem('hamava.web.settings',JSON.stringify({mode:'both',dubVolume:0}));window.__hamavaBufferStarts=0;const start=AudioBufferSourceNode.prototype.start;AudioBufferSourceNode.prototype.start=function(...args){window.__hamavaBufferStarts++;return start.apply(this,args);};window.YT={Player:class{constructor(_node,options){this.options=options;this.state=2;this.time=0;setTimeout(()=>options.events.onReady(),0);}playVideo(){this.state=1;this.options.events.onStateChange({data:1});}pauseVideo(){this.state=2;this.options.events.onStateChange({data:2});}seekTo(time){this.time=time;this.state=2;}setVolume(value){this.volume=value;}getCurrentTime(){return this.time;}getDuration(){return 3;}getPlayerState(){return this.state;}destroy(){}getVideoData(){return{title:'YouTube playback test'};}}};});
  await context.route('https://generativelanguage.googleapis.com/**',async route=>{
    if(route.request().method()==='GET'){
      await route.fulfill({json:{models:[
@@ -26,7 +26,7 @@ try{
    await route.fulfill({json:{status:'completed',steps:[{type:'model_output',content}]}});
  });
  const page=await context.newPage(),errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('ERROR',e.message);});page.on('console',m=>{if(m.type()==='error')console.log('CONSOLE',m.text().slice(0,500));});
- await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۷',{exact:false}).first().waitFor();assert.equal(await page.getByRole('link',{name:'کد منبع هم‌آوا در GitHub'}).getAttribute('href'),'https://github.com/mostafa5804/HamAva');
+ await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۸',{exact:false}).first().waitFor();assert.equal(await page.getByRole('link',{name:'کد منبع هم‌آوا در GitHub'}).getAttribute('href'),'https://github.com/mostafa5804/HamAva');
  await page.getByRole('button',{name:'تنظیمات'}).click();await page.getByRole('button',{name:'بررسی مدل‌های API Key'}).click();await page.getByText(/مدل دریافت شد/).waitFor();assert.equal(await page.locator('#ttsModel').getAttribute('list'),'tts-model-options');assert.ok(await page.locator('#tts-model-options option[value="gemini-3.8-flash-lite-tts"]').count());console.log('PASS model catalog discovery is available in settings');await page.getByRole('button',{name:'بستن تنظیمات'}).click();
  fs.writeFileSync(root+'/qa-source.wav',wav);await page.locator('input[type=file]').setInputFiles(root+'/qa-source.wav');
  await page.waitForFunction(()=>document.querySelector('video').readyState>=1).catch(async e=>{console.log(await page.locator('video').evaluate(v=>({src:v.src,state:v.readyState,error:v.error?.message})),await page.locator('body').innerText());throw e;});
@@ -42,8 +42,11 @@ try{
  await page.waitForSelector('.cue-row');assert.equal(calls,before);console.log('PASS IndexedDB transcript and clip restoration without API calls');
  await page.setViewportSize({width:390,height:844});assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth));await page.screenshot({path:root+'/qa-web-mobile.png',fullPage:true});console.log('PASS mobile layout');
 
+ await page.setViewportSize({width:1150,height:900});await page.locator('.mixer-card [role="slider"]').nth(1).press('End');await page.getByRole('tab',{name:'یوتیوب'}).click();await page.locator('#youtube-link').fill('https://youtu.be/9hE5-98ZeCg');await page.getByRole('button',{name:'باز کردن',exact:true}).click();await page.getByRole('tab',{name:'یوتیوب'}).waitFor();await page.waitForTimeout(300);
+ await page.locator('.desktop-translation-controls button').filter({hasText:'شروع ترجمه'}).click();await page.locator('.desktop-translation-controls button').filter({hasText:'پخش با ترجمه'}).waitFor();const youtubeStarts=await page.evaluate(()=>window.__hamavaBufferStarts);await page.locator('.desktop-translation-controls button').filter({hasText:'پخش با ترجمه'}).click();await page.waitForFunction(before=>window.__hamavaBufferStarts>before,youtubeStarts);assert.equal(await page.locator('.error-message').count(),0);console.log('PASS prepared dubbing starts during mocked YouTube iframe playback');
+
  await page.setViewportSize({width:1150,height:900});
- await page.locator('input[type=file]').setInputFiles(root+'/qa-source.webm');await page.waitForFunction(()=>document.querySelector('video').readyState>=1);
+ await page.getByRole('tab',{name:'فایل من'}).click();await page.locator('input[type=file]').setInputFiles(root+'/qa-source.webm');await page.waitForFunction(()=>document.querySelector('video').readyState>=1);
  await page.locator('.desktop-translation-controls button').filter({hasText:'شروع ترجمه'}).click();await page.locator('.desktop-translation-controls button').filter({hasText:'پخش با ترجمه'}).waitFor();
  const beforeVideo=calls;await page.getByRole('button',{name:'ساخت خروجی دوبله',exact:true}).click();
  await page.getByRole('link',{name:'دانلود ویدیوی دوبله',exact:true}).waitFor({timeout:15000});assert.equal(calls,beforeVideo);

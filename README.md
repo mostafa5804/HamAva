@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.0.7" src="https://img.shields.io/badge/version-1.0.7-087b63?style=flat-square">
+  <img alt="Version 1.0.8" src="https://img.shields.io/badge/version-1.0.8-087b63?style=flat-square">
   <a href="https://github.com/mostafa5804/HamAva/actions/workflows/pages.yml">
     <img alt="GitHub Pages deployment" src="https://img.shields.io/github/actions/workflow/status/mostafa5804/HamAva/pages.yml?branch=main&label=GitHub%20Pages&logo=github">
   </a>

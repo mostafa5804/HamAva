@@ -24,6 +24,7 @@ export class MediaEngine {
   clipUrl=''; clipEpoch=0; private workletLoaded=false;
   private preparedBuffers=new Map<string,AudioBuffer>(); private preparedLoading=new Map<string,Promise<AudioBuffer>>();
   private preparedNode?:AudioBufferSourceNode; private preparedStartTime=0; private preparedStartOffset=0; private preparedRate=1;
+  private preparedTime=0; private preparedPlaying=false;
   onError:(e:unknown)=>void; onTalking:(value:boolean)=>void;
   constructor(settings:Settings,onError:(e:unknown)=>void,onTalking:(v:boolean)=>void) {
     this.ctx=new AudioContext();this.settings=settings;this.onError=onError;this.onTalking=onTalking;
@@ -51,7 +52,7 @@ export class MediaEngine {
     this.dub.gain.setTargetAtTime(s.mode==='subtitle'?0:s.dubVolume/100,t,.025);
   }
   clearSound(){
-    this.clipEpoch++;this.clipUrl='';this.preparedNode=undefined;
+    this.clipEpoch++;this.clipUrl='';this.preparedNode=undefined;this.preparedPlaying=false;
     for(const n of this.nodes){n.onended=null;try{n.stop();}catch{}}
     this.nodes.clear();this.queued=0;this.onTalking(false);this.apply(this.settings);
   }
@@ -120,6 +121,10 @@ export class MediaEngine {
     node.onended=()=>{this.nodes.delete(node);node.disconnect();if(!this.nodes.size){this.onTalking(false);this.apply(this.settings);}};
   }
   syncPrepared(clips:AudioClip[],time:number,playing:boolean){
+    // YouTube is hosted in a cross-origin iframe, so this.video is intentionally
+    // unset. Keep the latest playback state here and use it when async decoding
+    // finishes; otherwise prepared YouTube clips are silently discarded.
+    this.preparedTime=time;this.preparedPlaying=playing;
     if(!playing||this.settings.mode==='subtitle'){if(this.clipUrl)this.clearSound();return;}
     const c=clips.find(c=>time>=c.start&&time<c.end);
     if(!c){if(this.clipUrl)this.clearSound();return;}
@@ -130,9 +135,9 @@ export class MediaEngine {
       this.stopPreparedNode();this.clipEpoch++;this.clipUrl=c.url;
       const epoch=this.clipEpoch;
       void this.loadPreparedBuffer(c.url).then(buffer=>{
-        if(epoch!==this.clipEpoch||!this.video||this.video.paused)return;
-        const current=clips.find(clip=>clip.url===c.url&&this.video!.currentTime>=clip.start&&this.video!.currentTime<clip.end);
-        if(current)this.startPreparedClip(current,buffer,this.video.currentTime);
+        if(epoch!==this.clipEpoch||!this.preparedPlaying)return;
+        const current=clips.find(clip=>clip.url===c.url&&this.preparedTime>=clip.start&&this.preparedTime<clip.end);
+        if(current)this.startPreparedClip(current,buffer,this.preparedTime);
       }).catch(error=>{
         if(epoch===this.clipEpoch)this.onError(new Error('خواندن صدای دوبله برای پخش ممکن نشد.',{cause:error}));
       });
