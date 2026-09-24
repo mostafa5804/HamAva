@@ -306,16 +306,36 @@ function splitLongCue(cue:Cue):Cue[] {
 }
 const videoFallbackModel = 'gemini-3.5-flash-lite';
 const ttsFallbackModel = 'gemini-2.5-flash-preview-tts';
+export function usesStructuredTtsSchema(model: string): boolean {
+  const match = /^gemini-(\d+)\.(\d+)-.*tts(?:-|$)/i.exec(model);
+  return Boolean(match && (Number(match[1]) > 3 || (Number(match[1]) === 3 && Number(match[2]) >= 8)));
+}
+export function ttsRequestBody(model: string, text: string, seconds: number, voice: 'Kore' | 'Charon'): Record<string, unknown> {
+  const speechConfig = {speech_config:[{voice}]};
+  if (usesStructuredTtsSchema(model)) {
+    return {
+      input:[{type:'user_input',content:[{type:'text',text,annotations:[{type:'speech_metadata',style:`Natural conversational intonation in Persian (fa-IR); speak briskly to fit about ${seconds.toFixed(1)} seconds.`}]}]}],
+      response_format:{type:'audio'},
+      generation_config:speechConfig,
+    };
+  }
+  return {
+    input:`Read ONLY the following Persian text fluently in Persian (fa-IR), with natural conversational intonation. Aim for about ${seconds.toFixed(1)} seconds, brisk if necessary. No introduction, commentary or extra words. Text:\n${text}`,
+    response_format:{type:'audio',sample_rate:24000},
+    generation_config:speechConfig,
+  };
+}
 function canUseFallback(error: unknown, model: string, fallback: string) {
   const e = error as {name?:string;httpStatus?:number};
   return e?.name === 'GeminiRequestError' && [429,500,502,503,504].includes(e.httpStatus || 0) && model !== fallback;
 }
-async function requestModel(key: string, body: Record<string, unknown>, signal: AbortSignal, phase: string, model: string, fallback: string): Promise<Content[]> {
+async function requestModel(key: string, body: Record<string, unknown> | ((model: string) => Record<string, unknown>), signal: AbortSignal, phase: string, model: string, fallback: string): Promise<Content[]> {
+  const forModel = (target: string) => typeof body === 'function' ? body(target) : body;
   try {
-    return await request(key, {...body, model}, signal, phase);
+    return await request(key, {...forModel(model), model}, signal, phase);
   } catch (error) {
     if (!canUseFallback(error, model, fallback)) throw error;
-    return request(key, {...body, model:fallback}, signal, `${phase} · مدل جایگزین`);
+    return request(key, {...forModel(fallback), model:fallback}, signal, `${phase} · مدل جایگزین`);
   }
 }
 export async function translateYoutube({id,duration,key,settings,signal,onProgress,onChunk}:{id:string;duration:number;key:string;settings:Settings;signal:AbortSignal;onProgress:(percent:number,label:string)=>void;onChunk?:(chunk:Cue[],index:number,total:number)=>void|Promise<void>}): Promise<Cue[]> {
@@ -364,7 +384,7 @@ export async function prepareDubbing({cues,key,settings,signal,onProgress,decode
       signal.throwIfAborted(); const g=groups[i];
       onProgress(i/groups.length*100,`ساخت صدای فارسی ${(i+1).toLocaleString('fa-IR')} از ${groups.length.toLocaleString('fa-IR')}`);
       const female=settings.voice==='female'||(settings.voice==='auto'&&g.voice==='female');
-      const content=await requestModel(key,{input:`Read ONLY the following Persian text fluently in Persian (fa-IR), with natural conversational intonation. Aim for about ${(g.end-g.start).toFixed(1)} seconds, brisk if necessary. No introduction, commentary or extra words. Text:\n${g.translation}`,response_format:{type:'audio',sample_rate:24000},generation_config:{speech_config:[{voice:female?'Kore':'Charon'}]}},signal,'ساخت صدای فارسی',settings.ttsModel,ttsFallbackModel);
+      const content=await requestModel(key,model=>ttsRequestBody(model,g.translation,g.end-g.start,female?'Kore':'Charon'),signal,'ساخت صدای فارسی',settings.ttsModel,ttsFallbackModel);
       const chunks=content.filter(c=>c.type==='audio'&&c.data);
       if(!chunks.length) throw new Error('Gemini برای این بخش صدا نساخت. زیرنویس آماده‌شده در دسترس است.');
       // Join decoded PCM bytes, never join padded base64 strings.

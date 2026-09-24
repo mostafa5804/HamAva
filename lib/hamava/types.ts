@@ -16,7 +16,7 @@ export interface AudioClip { start: number; end: number; url: string; duration: 
 export const defaults: Settings = {
   mode: 'both', originalVolume: 25, dubVolume: 100, duck: true, bilingual: false,
   captionSize: 22, captionOpacity: 80, captionPosition: 'bottom', captionColor: '#ffffff', captionOffset: 0,
-  voice: 'auto', model: 'gemini-3.5-live-translate-preview', videoModel: 'gemini-3.8-flash', ttsModel: 'gemini-3.1-flash-tts-preview',
+  voice: 'auto', model: 'gemini-3.5-live-translate-preview', videoModel: 'gemini-3.8-flash', ttsModel: 'gemini-3.8-flash-lite-tts',
 };
 export function sanitizeSettings(value: unknown): Settings {
   const s = { ...defaults }; if (!value || typeof value !== 'object') return s;
@@ -31,6 +31,16 @@ export function sanitizeSettings(value: unknown): Settings {
   if (['#ffffff','#ffe59a','#9df0da'].includes(String(v.captionColor))) s.captionColor = String(v.captionColor);
   for (const k of ['model','videoModel','ttsModel'] as const) if (typeof v[k] === 'string' && /^[a-z0-9.-]{4,100}$/.test(v[k])) s[k] = v[k];
   return s;
+}
+export function migrateSettings(value: unknown): Settings {
+  const settings = sanitizeSettings(value);
+  const previousDefault = value && typeof value === 'object'
+    ? (value as Record<string, unknown>).ttsModel
+    : undefined;
+  // 1.0.4 saved this default for every user, even when they never changed it.
+  // Migrate that exact prior default; all other selected model IDs stay intact.
+  if (previousDefault === 'gemini-3.1-flash-tts-preview') settings.ttsModel = defaults.ttsModel;
+  return settings;
 }
 export function youtubeId(input: string): string {
   const u = new URL(input.trim()); if (u.protocol !== 'https:') throw new Error('لینک یوتیوب باید با https شروع شود.');

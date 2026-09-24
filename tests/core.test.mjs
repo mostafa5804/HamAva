@@ -1,7 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { defaults,youtubeId,directUrl,sanitizeSettings,errorText,isValidApiKey } from '../lib/hamava/types.ts';
-import { validateCues,groupCues,pcmWave,translateYoutube,prepareDubbing } from '../lib/hamava/gemini.ts';
+import { defaults,youtubeId,directUrl,sanitizeSettings,migrateSettings,errorText,isValidApiKey } from '../lib/hamava/types.ts';
+import { validateCues,groupCues,pcmWave,translateYoutube,prepareDubbing,ttsRequestBody,usesStructuredTtsSchema } from '../lib/hamava/gemini.ts';
+import { fetchGeminiModels,modelsForUse } from '../lib/hamava/model-catalog.ts';
 import { appAsset } from '../lib/hamava/assets.ts';
 
 const cue={start:0,end:2,source:'Hello',translation:'سلام',speaker:'a',voice:'female'};
@@ -35,6 +36,43 @@ test('settings sanitize persisted data and redact key material',()=>{
   assert.equal(s.originalVolume,100);assert.equal(s.dubVolume,0);assert.equal(s.voice,'auto');assert.equal(s.model,defaults.model);assert.equal(s.captionSize,22);
   assert.ok(!errorText(new Error('bad secret-dummy-key'), 'secret-dummy-key').includes('secret-dummy-key'));
   assert.ok(!errorText(new Error('invalid AQ.Ab8o-sensitive-auth-key-2026')).includes('AQ.Ab8o-sensitive-auth-key-2026'));
+});
+test('settings migration upgrades only the previous built-in TTS default',()=>{
+  assert.equal(migrateSettings({ttsModel:'gemini-3.1-flash-tts-preview'}).ttsModel,'gemini-3.8-flash-lite-tts');
+  assert.equal(migrateSettings({ttsModel:'gemini-3.1-flash-tts-preview',model:'gemini-3.8-live'}).model,'gemini-3.8-live');
+  assert.equal(migrateSettings({ttsModel:'gemini-3.8-flash-tts'}).ttsModel,'gemini-3.8-flash-tts');
+});
+test('model discovery uses the saved key in a header, reads all pages, and separates use cases',async()=>{
+  const oldFetch=globalThis.fetch;const calls=[];const key='AQ.Ab8o-catalog-test-key-2026';
+  globalThis.fetch=async(url,options)=>{
+    const parsed=new URL(url);assert.equal(parsed.origin,'https://generativelanguage.googleapis.com');assert.equal(parsed.pathname,'/v1beta/models');
+    assert.equal(new Headers(options.headers).get('x-goog-api-key'),key);assert.equal(parsed.searchParams.has('key'),false);calls.push(parsed.searchParams.get('pageToken'));
+    if(calls.length===1)return Response.json({models:[
+      {name:'models/gemini-3.8-live',displayName:'Gemini Live',supportedGenerationMethods:['bidiGenerateContent']},
+      {name:'models/gemini-3.5-live-translate-preview',displayName:'Gemini Live Translate',supportedGenerationMethods:['bidiGenerateContent']},
+      {name:'models/gemini-3.8-flash-lite-tts',displayName:'Gemini TTS',supportedGenerationMethods:['generateContent']},
+      {name:'models/gemini-3.8-flash',displayName:'Gemini Flash',supportedGenerationMethods:['generateContent']},
+      {name:'models/gemini-3.1-flash-image',displayName:'Gemini Image',supportedGenerationMethods:['generateContent']},
+    ],nextPageToken:'next'});
+    return Response.json({models:[{name:'models/gemini-3.1-flash-tts-preview',displayName:'Older TTS',supportedGenerationMethods:['generateContent']}]});
+  };
+  try{
+    const models=await fetchGeminiModels(key);assert.deepEqual(calls,[null,'next']);
+    assert.deepEqual(modelsForUse(models,'live').map(x=>x.id),['gemini-3.5-live-translate-preview']);
+    assert.deepEqual(modelsForUse(models,'tts').map(x=>x.id).sort(),['gemini-3.1-flash-tts-preview','gemini-3.8-flash-lite-tts']);
+    assert.deepEqual(modelsForUse(models,'video').map(x=>x.id),['gemini-3.8-flash']);
+  }finally{globalThis.fetch=oldFetch;}
+});
+test('TTS requests use verbatim transcript annotations for 3.8 and preserve the legacy 3.1 schema',()=>{
+  assert.equal(usesStructuredTtsSchema('gemini-3.8-flash-lite-tts'),true);
+  assert.equal(usesStructuredTtsSchema('gemini-3.1-flash-tts-preview'),false);
+  const modern=ttsRequestBody('gemini-3.8-flash-lite-tts','فقط متن فارسی',2.5,'Kore');
+  assert.deepEqual(modern.input[0].content[0].text,'فقط متن فارسی');
+  assert.equal(modern.input[0].content[0].annotations[0].type,'speech_metadata');
+  assert.match(modern.input[0].content[0].annotations[0].style,/2\.5 seconds/);
+  assert.deepEqual(modern.response_format,{type:'audio'});
+  const legacy=ttsRequestBody('gemini-3.1-flash-tts-preview','فقط متن فارسی',2.5,'Charon');
+  assert.match(legacy.input,/Read ONLY/);assert.deepEqual(legacy.response_format,{type:'audio',sample_rate:24000});
 });
 test('incomplete or wrongly timed transcript is never marked ready',()=>{
   assert.throws(()=>validateCues({complete:false,cues:[cue]},0,240));
@@ -82,9 +120,23 @@ test('prepared dubbing uses selected voices; cancelled jobs do not issue request
   globalThis.fetch=async(url,options)=>{assertBrowserHeaders(url,options);calls.push(JSON.parse(options.body));return Response.json({status:'completed',steps:[{type:'model_output',content:[{type:'audio',mime_type:'audio/l16',sample_rate:24000,channels:1,data:Buffer.alloc(48000).toString('base64')}]}]});};
   try{
     const options={cues:[cue,{...cue,start:2,end:4,speaker:'b',voice:'male'}],key:'dummy',settings:defaults,signal:new AbortController().signal,onProgress:()=>{},decodeAudio:()=>{throw new Error('PCM needs no compressed decoder');}};
-    const clips=await prepareDubbing(options);assert.equal(clips.length,2);assert.equal(calls[0].generation_config.speech_config[0].voice,'Kore');assert.equal(calls[1].generation_config.speech_config[0].voice,'Charon');clips.forEach(c=>URL.revokeObjectURL(c.url));
+    const clips=await prepareDubbing(options);assert.equal(clips.length,2);assert.equal(calls[0].generation_config.speech_config[0].voice,'Kore');assert.equal(calls[1].generation_config.speech_config[0].voice,'Charon');assert.equal(calls[0].model,'gemini-3.8-flash-lite-tts');assert.equal(calls[0].input[0].content[0].text,'سلام');assert.equal(calls[0].input[0].content[0].annotations[0].type,'speech_metadata');clips.forEach(c=>URL.revokeObjectURL(c.url));
     const abort=new AbortController();abort.abort();await assert.rejects(prepareDubbing({...options,signal:abort.signal}),{name:'AbortError'});assert.equal(calls.length,2);
   }finally{globalThis.fetch=fetch;}
+});
+test('TTS fallback rebuilds the prompt for the fallback model schema',async()=>{
+  const oldFetch=globalThis.fetch;const calls=[];
+  globalThis.fetch=async(url,options)=>{
+    assertBrowserHeaders(url,options);const body=JSON.parse(options.body);calls.push(body);
+    if(calls.length===1)return Response.json({error:{message:'temporary overload'}},{status:503});
+    return Response.json({status:'completed',steps:[{type:'model_output',content:[{type:'audio',mime_type:'audio/l16',sample_rate:24000,channels:1,data:Buffer.alloc(48000).toString('base64')}]}]});
+  };
+  try{
+    const clips=await prepareDubbing({cues:[cue],key:'dummy',settings:defaults,signal:new AbortController().signal,onProgress:()=>{},decodeAudio:()=>{throw new Error('PCM needs no decoder');}});
+    assert.equal(calls.length,2);assert.deepEqual(calls.map(x=>x.model),['gemini-3.8-flash-lite-tts','gemini-2.5-flash-preview-tts']);
+    assert.equal(calls[0].input[0].content[0].text,'سلام');assert.equal(typeof calls[1].input,'string');assert.match(calls[1].input,/Read ONLY/);
+    clips.forEach(clip=>URL.revokeObjectURL(clip.url));
+  }finally{globalThis.fetch=oldFetch;}
 });
 test('Google HTTP errors retain status and details, including array-shaped key errors',async t=>{
   for(const [status,message,expected,array] of [

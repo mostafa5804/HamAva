@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AudioLines, Settings2, Upload, Link2, Video as Youtube, Play, Pause, Maximize, Volume2, Mic2, Subtitles, KeyRound, Check, X, Eye, EyeOff, Download, RotateCcw, SkipBack, SkipForward, Smartphone, ChevronLeft, CircleHelp } from 'lucide-react';
+import { AudioLines, Settings2, Upload, Link2, Video as Youtube, Play, Pause, Maximize, Volume2, Mic2, Subtitles, KeyRound, Check, X, Eye, EyeOff, Download, RotateCcw, SkipBack, SkipForward, Smartphone, ChevronLeft, CircleHelp, RefreshCw } from 'lucide-react';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { Sheet, SheetContent, SheetTitle, SheetDescription, SheetHeader, SheetClose } from '@/components/ui/sheet';
 import { Slider } from '@/components/ui/slider';
@@ -9,7 +9,7 @@ import { Switch } from '@/components/ui/switch';
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from '@/components/ui/select';
 import { TranslationControls } from '@/components/translation-controls';
 import { Empty, EmptyHeader, EmptyTitle, EmptyDescription, EmptyMedia } from '@/components/ui/empty';
-import { defaults, sanitizeSettings, isValidApiKey, youtubeId, directUrl, errorText, formatTime, type Settings, type SourceKind, type Cue, type AudioClip, type Mode } from '@/lib/hamava/types';
+import { defaults, sanitizeSettings, migrateSettings, isValidApiKey, youtubeId, directUrl, errorText, formatTime, type Settings, type SourceKind, type Cue, type AudioClip, type Mode } from '@/lib/hamava/types';
 import { MediaEngine } from '@/lib/hamava/engine';
 import { appAsset } from '@/lib/hamava/assets';
 import { translateYoutube, translateMedia, prepareDubbing } from '@/lib/hamava/gemini';
@@ -19,10 +19,11 @@ import { downloadName, renderDubbingTrack, saveBlob } from '@/lib/hamava/media-e
 import { loadYoutube, type YouTubePlayer } from '@/lib/hamava/youtube';
 import { clearArchive, fileIdentity, loadSession, loadVideo, loadLiveAudio, restoreClips, saveSession, saveVideo, saveLiveAudio } from '@/lib/hamava/session-store';
 import { exportCaptions } from '@/lib/hamava/shared.js';
+import { fetchGeminiModels, modelsForUse, type GeminiApiModel, type GeminiModelUse } from '@/lib/hamava/model-catalog';
 
 type Media = { kind:SourceKind; url:string; name:string; id?:string; revision:number; identity:string };
 type InstallPrompt = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>};
-const APP_VERSION = '۱.۰.۴';
+const APP_VERSION = '۱.۰.۵';
 
 function Range({label,value,min=0,max=100,step=1,suffix='٪',onChange,icon}:{label:string;value:number;min?:number;max?:number;step?:number;suffix?:string;onChange:(v:number)=>void;icon?:React.ReactNode}) {
   const id=label.replaceAll(' ','-');
@@ -36,7 +37,7 @@ function Toggle({label,checked,onChange}:{label:string;checked:boolean;onChange:
 // Prerender has no localStorage; lazily restore what this browser saved last time.
 function storedSettings(): Settings {
   if (typeof localStorage === 'undefined') return defaults;
-  try { const saved = localStorage.getItem('hamava.web.settings'); return saved ? sanitizeSettings(JSON.parse(saved)) : defaults; } catch { return defaults; }
+  try { const saved = localStorage.getItem('hamava.web.settings'); return saved ? migrateSettings(JSON.parse(saved)) : defaults; } catch { return defaults; }
 }
 function storedKey(): string {
   if (typeof localStorage === 'undefined') return '';
@@ -49,6 +50,7 @@ export default function Studio(){
   const [tab,setTab]=useState<SourceKind>('file'),[url,setUrl]=useState(''),[ytUrl,setYtUrl]=useState('');
   const [media,setMedia]=useState<Media|null>(null),[duration,setDuration]=useState(0),[time,setTime]=useState(0),[playing,setPlaying]=useState(false),[mediaReady,setMediaReady]=useState(false);
   const [key,setKey]=useState(''),[keyDraft,setKeyDraft]=useState(''),[remember,setRemember]=useState(true),[showKey,setShowKey]=useState(false),[sheet,setSheet]=useState(false),[keyNote,setKeyNote]=useState('');
+  const [modelCatalog,setModelCatalog]=useState<GeminiApiModel[]>([]),[modelCatalogNote,setModelCatalogNote]=useState(''),[loadingModels,setLoadingModels]=useState(false);
   const [status,setStatus]=useState('idle'),[error,setError]=useState(''),[notice,setNotice]=useState(''),[talking,setTalking]=useState(false);
   const [preparing,setPreparing]=useState(false),[progress,setProgress]=useState(0),[progressLabel,setProgressLabel]=useState(''),[partialReady,setPartialReady]=useState(false);
   const [cues,setCues]=useState<Cue[]>([]),[clips,setClips]=useState<AudioClip[]>([]),[liveCaption,setLiveCaption]=useState<Cue|null>(null),[translationEnabled,setTranslationEnabled]=useState(false),[recording,setRecording]=useState(false),[recordedUrl,setRecordedUrl]=useState(''),[exportingAudio,setExportingAudio]=useState(false);
@@ -264,7 +266,19 @@ export default function Studio(){
   function onSeeked(){if(liveEnabled.current&&!video.current?.paused)void beginLive();}
   function saveKey(){
     const clean=keyDraft.trim();if(clean&&!isValidApiKey(clean)){setKeyNote('کلید را کامل، بدون فاصله یا شکست خط وارد کن؛ اعتبار خود کلید را گوگل بررسی می‌کند.');return;}
+    if(clean!==key){setModelCatalog([]);setModelCatalogNote('');}
     stopLive();setKey(clean);try{if(remember&&clean)localStorage.setItem('hamava.web.key',clean);else localStorage.removeItem('hamava.web.key');setKeyNote(clean?(remember?'کلید در همین مرورگر ذخیره شد.':'کلید فقط برای این بار فعال شد.'):'کلید حذف شد.');}catch{setKeyNote('کلید فعال شد، اما مرورگر اجازه ذخیره نداد.');}
+  }
+  async function discoverModels(){
+    if(!key){setModelCatalogNote('ابتدا کلید API را ذخیره کن.');return;}
+    setLoadingModels(true);setModelCatalogNote('در حال دریافت مدل‌های همین API Key…');
+    try{
+      const found=await fetchGeminiModels(key);
+      setModelCatalog(found);
+      const counts=(['live','video','tts'] as GeminiModelUse[]).map(use=>modelsForUse(found,use).length);
+      setModelCatalogNote(`${found.length.toLocaleString('fa-IR')} مدل دریافت شد؛ Live: ${counts[0].toLocaleString('fa-IR')}، تحلیل: ${counts[1].toLocaleString('fa-IR')}، TTS: ${counts[2].toLocaleString('fa-IR')}.`);
+    }catch(e){setModelCatalog([]);setModelCatalogNote(errorText(e,key));}
+    finally{setLoadingModels(false);}
   }
   function changeVoice(v:string){update({voice:v as Settings['voice']});if(clips.length){clearPrepared();setStatus('captions');setNotice('برای اعمال صدای جدید، دوبله را دوباره آماده کن.');}}
   function stopRecording(){if(recorder.current?.state==='recording'){video.current?.pause();recorder.current.stop();}}
@@ -399,9 +413,38 @@ export default function Studio(){
     <section className="mobile-translation-dock" aria-label="کنترل سریع ترجمه"><TranslationControls {...translationControls}/></section>
 
     <Sheet open={sheet} onOpenChange={setSheet}><SheetContent side="left" showCloseButton={false} className="settings-sheet" dir="rtl"><SheetHeader><div className="section-heading"><SheetTitle>تنظیمات هم‌آوا</SheetTitle><SheetClose className="icon-button" aria-label="بستن تنظیمات"><X size={21}/></SheetClose></div><SheetDescription>تنظیمات مخصوص همین مرورگر</SheetDescription></SheetHeader>
-      <div className="settings-scroll"><section><h3><KeyRound size={19}/>کلید Gemini</h3><label htmlFor="api-key">کلید API از AI Studio (AQ. یا AIza)</label><div className="key-input"><input id="api-key" dir="ltr" type={showKey?'text':'password'} autoComplete="off" spellCheck={false} placeholder="AQ.… یا AIza…" value={keyDraft} onChange={e=>{setKeyDraft(e.target.value);setKeyNote('');}}/><button className="icon-button" onClick={()=>setShowKey(v=>!v)} aria-label={showKey?'پنهان کردن کلید':'نمایش کلید'}>{showKey?<EyeOff size={19}/>:<Eye size={19}/>}</button></div><Toggle label="ذخیره کلید در این مرورگر" checked={remember} onChange={v=>{setRemember(v);if(!v){try{localStorage.removeItem('hamava.web.key');}catch{}}}}/><div className="key-buttons"><button className="primary-button" disabled={preparing||recording} onClick={saveKey}><Check size={17}/>ذخیره کلید</button><button className="outline-button" disabled={preparing||!key} onClick={()=>{setKey('');setKeyDraft('');stopLive();try{localStorage.removeItem('hamava.web.key');}catch{}setKeyNote('کلید حذف شد.');}}>حذف کلید</button></div>{keyNote&&<p className="key-note" role="status">{keyNote}</p>}<p className="hint">کلید به سرور هم‌آوا فرستاده نمی‌شود؛ برای ترجمه، کلید و صدای ویدیو یا لینک یوتیوب مستقیم به گوگل ارسال می‌شوند. ذخیره مرورگر رمزنگاری جداگانه ندارد.</p><a className="inline-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">دریافت کلید از Google AI Studio <ChevronLeft size={14}/></a></section>
+      <div className="settings-scroll"><section><h3><KeyRound size={19}/>کلید Gemini</h3><label htmlFor="api-key">کلید API از AI Studio (AQ. یا AIza)</label><div className="key-input"><input id="api-key" dir="ltr" type={showKey?'text':'password'} autoComplete="off" spellCheck={false} placeholder="AQ.… یا AIza…" value={keyDraft} onChange={e=>{setKeyDraft(e.target.value);setKeyNote('');}}/><button className="icon-button" onClick={()=>setShowKey(v=>!v)} aria-label={showKey?'پنهان کردن کلید':'نمایش کلید'}>{showKey?<EyeOff size={19}/>:<Eye size={19}/>}</button></div><Toggle label="ذخیره کلید در این مرورگر" checked={remember} onChange={v=>{setRemember(v);if(!v){try{localStorage.removeItem('hamava.web.key');}catch{}}}}/><div className="key-buttons"><button className="primary-button" disabled={preparing||recording} onClick={saveKey}><Check size={17}/>ذخیره کلید</button><button className="outline-button" disabled={preparing||!key} onClick={()=>{setKey('');setKeyDraft('');setModelCatalog([]);setModelCatalogNote('');stopLive();try{localStorage.removeItem('hamava.web.key');}catch{}setKeyNote('کلید حذف شد.');}}>حذف کلید</button></div>{keyNote&&<p className="key-note" role="status">{keyNote}</p>}<p className="hint">کلید به سرور هم‌آوا فرستاده نمی‌شود؛ برای ترجمه، کلید و صدای ویدیو یا لینک یوتیوب مستقیم به گوگل ارسال می‌شوند. ذخیره مرورگر رمزنگاری جداگانه ندارد.</p><a className="inline-link" href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer">دریافت کلید از Google AI Studio <ChevronLeft size={14}/></a></section>
         <section><h3><Subtitles size={19}/>نمایش زیرنویس</h3><div className="caption-preview"><span style={{fontSize:settings.captionSize,color:settings.captionColor,backgroundColor:`rgba(3,12,17,${settings.captionOpacity/100})`}}>دنیا را به زبان خودت ببین.{settings.bilingual&&<small>See the world in your language.</small>}</span></div><Range label="اندازه نوشته" value={settings.captionSize} min={16} max={40} suffix="" onChange={v=>update({captionSize:v})}/><Range label="تیرگی پس‌زمینه" value={settings.captionOpacity} onChange={v=>update({captionOpacity:v})}/><Choice label="جای زیرنویس" value={settings.captionPosition} onChange={v=>update({captionPosition:v as Settings['captionPosition']})} items={[["bottom","پایین تصویر"],["top","بالای تصویر"]]}/><Choice label="رنگ نوشته" value={settings.captionColor} onChange={v=>update({captionColor:v})} items={[["#ffffff","سفید"],["#ffe59a","زرد روشن"],["#9df0da","سبز روشن"]]}/><Toggle label="نمایش متن اصلی کنار فارسی" checked={settings.bilingual} onChange={v=>update({bilingual:v})}/><Range label="تأخیر زیرنویس" value={settings.captionOffset} min={-10} max={10} step={.25} suffix=" ثانیه" onChange={v=>update({captionOffset:v})}/></section>
-        <section><h3><Settings2 size={19}/>مدل‌های Gemini</h3><p className="hint">فایل، لینک مستقیم و یوتیوب با «تحلیل ویدیو و فایل» ترجمه می‌شوند و زمان‌بندی پیشنهادی می‌گیرند؛ «ترجمه زنده» فقط برای فایل‌های بزرگ‌تر از سقف تحلیل به‌کار می‌رود. ساخت صدا با TTS است. تغییر مدل، ترجمه فعال را متوقف می‌کند.</p>{([['model','ترجمه زنده (فایل‌های بزرگ)'],['videoModel','تحلیل ویدیو و فایل'],['ttsModel','ساخت صدای فارسی']] as const).map(([field,label])=><div className="model-field" key={field}><label htmlFor={field}>{label}</label><input id={field} dir="ltr" defaultValue={settings[field]} key={settings[field]} disabled={preparing||recording} onBlur={e=>{if(e.target.value!==settings[field]){if(!/^[a-z0-9.-]{4,100}$/.test(e.target.value)){e.target.value=settings[field];return;}stopLive();update({[field]:e.target.value});if(field!=='model'){clearPrepared();setCues([]);setStatus('idle');}}}}/></div>)}<p className="hint">حفظ لحن در ترجمه همزمان تقریبی است و ممکن است بین گوینده‌ها تغییر کند.</p></section>
+        <section>
+          <h3><Settings2 size={19}/>مدل‌های Gemini</h3>
+          <p className="hint">برای هر کار، مدل جدا انتخاب می‌شود. شناسهٔ مدل را می‌توانی از فهرست API Key انتخاب کنی یا دستی وارد کنی؛ انتخاب مدل نامناسب ممکن است با خطای API روبه‌رو شود.</p>
+          <button className="outline-button model-scan-button" onClick={()=>void discoverModels()} disabled={!key||loadingModels||preparing||recording}>
+            <RefreshCw size={16} className={loadingModels?'spin':''}/>{loadingModels?'در حال بررسی…':'بررسی مدل‌های API Key'}
+          </button>
+          {modelCatalogNote&&<p className="model-catalog-note" role="status">{modelCatalogNote}</p>}
+          <p className="hint model-access-note">فهرست برای پروژهٔ متصل به همین API Key است. فهرست‌شدن، سهمیه یا مجازبودن همهٔ قابلیت‌های مدل را تضمین نمی‌کند؛ اشتراک Gemini Pro هم جدا از سهمیهٔ Gemini API است.</p>
+          {([
+            ['model','ترجمه زنده (فایل‌های بزرگ)','live'],
+            ['videoModel','تحلیل ویدیو و فایل','video'],
+            ['ttsModel','ساخت صدای فارسی','tts'],
+          ] as const).map(([field,label,use])=>{
+            const options=modelsForUse(modelCatalog,use as GeminiModelUse);
+            const listId=`${use}-model-options`;
+            return <div className="model-field" key={field}>
+              <label htmlFor={field}>{label}</label>
+              <input id={field} list={listId} dir="ltr" autoComplete="off" spellCheck={false} defaultValue={settings[field]} key={`${field}:${settings[field]}`} disabled={preparing||recording} onBlur={e=>{
+                if(e.target.value!==settings[field]){
+                  if(!/^[a-z0-9.-]{4,100}$/i.test(e.target.value)){e.target.value=settings[field];return;}
+                  stopLive();update({[field]:e.target.value});
+                  if(field!=='model'){clearPrepared();setCues([]);setStatus('idle');}
+                }
+              }}/>
+              <datalist id={listId}>{options.map(model=><option value={model.id} label={model.displayName} key={model.id}/>)}</datalist>
+              <small>{options.length?`${options.length.toLocaleString('fa-IR')} مدل از فهرست API برای این کاربرد پیدا شد.`:'برای دیدن گزینه‌ها «بررسی مدل‌های API Key» را بزن؛ شناسهٔ دستی هم پذیرفته می‌شود.'}</small>
+            </div>;
+          })}
+          <p className="hint">حفظ لحن در ترجمه همزمان تقریبی است و ممکن است بین گوینده‌ها تغییر کند.</p>
+        </section>
         <button className="text-button" disabled={preparing||recording} onClick={()=>{void archiveWrites.current.then(()=>clearArchive()).then(()=>{if(recordedUrlRef.current)URL.revokeObjectURL(recordedUrlRef.current);recordedUrlRef.current='';setRecordedUrl('');if(liveAudioUrlRef.current)URL.revokeObjectURL(liveAudioUrlRef.current);liveAudioUrlRef.current='';setLiveAudioUrl('');setNotice('نسخه ذخیره‌شده خروجی‌ها حذف شد.');}).catch(report);}}>حذف خروجی‌های ذخیره‌شده مرورگر</button>
         <button className="outline-button install-wide" onClick={install}><Smartphone size={18}/>افزودن به صفحه اصلی گوشی</button>
       </div>

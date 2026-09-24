@@ -128,3 +128,7 @@ body {
   .mobile-translation-dock .preparing-actions{margin-top:8px}.mobile-translation-dock .preparing-actions button{min-height:40px;padding:5px 8px;font-size:12px}
 }
 @media(max-width:720px){.source-tabs [data-slot=tabs-trigger],.link-form .outline-button,.file-drop .outline-button,.key-reminder{font-size:14px}.app-footer{font-size:12px}}
+.model-scan-button{width:100%;margin-top:4px}
+.model-catalog-note{margin-top:10px;padding:9px 11px;border:1px solid #d4e8df;border-radius:9px;background:#f0f8f4;color:#176a58;font-size:12px;line-height:1.8;overflow-wrap:anywhere}
+.model-access-note{font-size:12px}
+.model-field small{display:block;margin-top:5px;color:#73858e;font-size:11px;line-height:1.7}

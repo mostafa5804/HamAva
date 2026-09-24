@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.0.4" src="https://img.shields.io/badge/version-1.0.4-087b63?style=flat-square">
+  <img alt="Version 1.0.5" src="https://img.shields.io/badge/version-1.0.5-087b63?style=flat-square">
   <a href="https://github.com/mostafa5804/HamAva/actions/workflows/pages.yml">
     <img alt="GitHub Pages deployment" src="https://img.shields.io/github/actions/workflow/status/mostafa5804/HamAva/pages.yml?branch=main&label=GitHub%20Pages&logo=github">
   </a>
@@ -106,7 +106,7 @@ pnpm lint
 
 ## 🧪 نسخهٔ جاری
 
-**۱.۰.۴** — سازگاری با کلیدهای جدید Google AI Studio، از جمله قالب <code>AQ.</code>. آزمون‌های خودکار، بیلد ایستا و آزمون مرورگر با پاسخ ساختگی Gemini اجرا می‌شوند؛ کیفیت ترجمه و دوبله با کلید واقعی در آزمون خودکار سنجیده نمی‌شود.
+**۱.۰.۵** — انتخاب مدل متناسب با API Key یا واردکردن شناسهٔ دستی؛ پشتیبانی از قالب گفتار Gemini 3.8 و نگه‌داشتن امکان انتخاب مدل‌های TTS قدیمی‌تر. سهمیه و هزینه تابع پروژهٔ Google AI Studio است.
 
 ---
 
@@ -114,5 +114,5 @@ pnpm lint
   <a href="https://github.com/mostafa5804/HamAva">
     <img alt="GitHub" src="https://img.shields.io/badge/ساخته%20شده%20با-GitHub-181717?style=flat-square&logo=github&logoColor=white">
   </a>
-  &nbsp; هم‌آوا · نسخهٔ ۱.۰.۴
+  &nbsp; هم‌آوا · نسخهٔ ۱.۰.۵
 </p>

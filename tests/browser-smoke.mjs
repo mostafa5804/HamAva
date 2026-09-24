@@ -12,12 +12,22 @@ try{
  const context=await browser.newContext({viewport:{width:1150,height:900},acceptDownloads:true});
  await context.addInitScript(()=>{if(!localStorage.getItem('hamava.web.key'))localStorage.setItem('hamava.web.key','AQ.Ab8o-test-only-fake-auth-key-2026');if(!localStorage.getItem('hamava.web.settings'))localStorage.setItem('hamava.web.settings',JSON.stringify({mode:'both',dubVolume:0}));});
  await context.route('https://generativelanguage.googleapis.com/**',async route=>{
+   if(route.request().method()==='GET'){
+     await route.fulfill({json:{models:[
+       {name:'models/gemini-3.8-live',displayName:'Gemini 3.8 Live',supportedGenerationMethods:['bidiGenerateContent']},
+       {name:'models/gemini-3.5-live-translate-preview',displayName:'Gemini 3.5 Live Translate',supportedGenerationMethods:['bidiGenerateContent']},
+       {name:'models/gemini-3.8-flash',displayName:'Gemini 3.8 Flash',supportedGenerationMethods:['generateContent']},
+       {name:'models/gemini-3.8-flash-lite-tts',displayName:'Gemini 3.8 Flash-Lite TTS',supportedGenerationMethods:['generateContent']},
+       {name:'models/gemini-3.1-flash-tts-preview',displayName:'Gemini 3.1 Flash TTS Preview',supportedGenerationMethods:['generateContent']},
+     ]}});return;
+   }
    calls++;const body=route.request().postDataJSON();
    const content=body.model.includes('tts')?[{type:'audio',mime_type:'audio/l16',sample_rate:24000,channels:1,data:pcm}]:[{type:'text',text:JSON.stringify({complete:true,cues:[{start:0,end:3,source:'Hello world',translation:'سلام دنیا',speaker:'a',voice:'female'}]})}];
    await route.fulfill({json:{status:'completed',steps:[{type:'model_output',content}]}});
  });
  const page=await context.newPage(),errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('ERROR',e.message);});page.on('console',m=>{if(m.type()==='error')console.log('CONSOLE',m.text().slice(0,500));});
- await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۴',{exact:false}).first().waitFor();assert.equal(await page.getByRole('link',{name:'کد منبع هم‌آوا در GitHub'}).getAttribute('href'),'https://github.com/mostafa5804/HamAva');
+ await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۵',{exact:false}).first().waitFor();assert.equal(await page.getByRole('link',{name:'کد منبع هم‌آوا در GitHub'}).getAttribute('href'),'https://github.com/mostafa5804/HamAva');
+ await page.getByRole('button',{name:'تنظیمات'}).click();await page.getByRole('button',{name:'بررسی مدل‌های API Key'}).click();await page.getByText(/مدل دریافت شد/).waitFor();assert.equal(await page.locator('#ttsModel').getAttribute('list'),'tts-model-options');assert.ok(await page.locator('#tts-model-options option[value="gemini-3.8-flash-lite-tts"]').count());console.log('PASS model catalog discovery is available in settings');await page.getByRole('button',{name:'بستن تنظیمات'}).click();
  fs.writeFileSync(root+'/qa-source.wav',wav);await page.locator('input[type=file]').setInputFiles(root+'/qa-source.wav');
  await page.waitForFunction(()=>document.querySelector('video').readyState>=1).catch(async e=>{console.log(await page.locator('video').evaluate(v=>({src:v.src,state:v.readyState,error:v.error?.message})),await page.locator('body').innerText());throw e;});
  await page.locator('.desktop-translation-controls button').filter({hasText:'شروع ترجمه'}).click();
