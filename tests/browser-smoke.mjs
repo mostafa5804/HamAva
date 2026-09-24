@@ -5,12 +5,12 @@ const root=fs.mkdtempSync(path.join(os.tmpdir(),'hamava-browser-'));
 execFileSync('ffmpeg',['-hide_banner','-loglevel','error','-f','lavfi','-i','color=c=blue:s=320x180:r=15:d=3','-f','lavfi','-i','sine=frequency=440:duration=3','-c:v','libvpx','-c:a','libopus','-y',root+'/qa-source.webm']);
 const server=http.createServer((req,res)=>{let pathname=new URL(req.url,'http://localhost').pathname.replace(/^\/HamAva/,'');if(pathname.endsWith('/'))pathname+='index.html';const file=path.join(repo,'out',pathname);if(!fs.existsSync(file)||fs.statSync(file).isDirectory()){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',({'.html':'text/html','.js':'text/javascript','.css':'text/css','.svg':'image/svg+xml','.woff2':'font/woff2','.json':'application/json'})[path.extname(file)]||'application/octet-stream');res.end(fs.readFileSync(file));});
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
-const browser=await chromium.launch({executablePath:process.env.BROWSER_EXECUTABLE||undefined,headless:true,args:['--no-sandbox','--disable-gpu','--autoplay-policy=no-user-gesture-required','--disable-dev-shm-usage'],env:process.env});
+const browser=await chromium.launch({executablePath:process.env.BROWSER_EXECUTABLE||undefined,headless:true,args:['--no-sandbox','--disable-gpu','--disable-dev-shm-usage'],env:process.env});
 const rate=24000,len=rate*3,wav=Buffer.alloc(44+len*2);wav.write('RIFF');wav.writeUInt32LE(wav.length-8,4);wav.write('WAVE',8);wav.write('fmt ',12);wav.writeUInt32LE(16,16);wav.writeUInt16LE(1,20);wav.writeUInt16LE(1,22);wav.writeUInt32LE(rate,24);wav.writeUInt32LE(rate*2,28);wav.writeUInt16LE(2,32);wav.writeUInt16LE(16,34);wav.write('data',36);wav.writeUInt32LE(len*2,40);for(let i=0;i<len;i++)wav.writeInt16LE(Math.round(Math.sin(2*Math.PI*220*i/rate)*8000),44+i*2);
 const pcm=wav.subarray(44).toString('base64');let calls=0;
 try{
  const context=await browser.newContext({viewport:{width:1150,height:900},acceptDownloads:true});
- await context.addInitScript(()=>{if(!localStorage.getItem('hamava.web.key'))localStorage.setItem('hamava.web.key','AQ.Ab8o-test-only-fake-auth-key-2026');if(!localStorage.getItem('hamava.web.settings'))localStorage.setItem('hamava.web.settings',JSON.stringify({mode:'both',dubVolume:0}));});
+ await context.addInitScript(()=>{if(!localStorage.getItem('hamava.web.key'))localStorage.setItem('hamava.web.key','AQ.Ab8o-test-only-fake-auth-key-2026');if(!localStorage.getItem('hamava.web.settings'))localStorage.setItem('hamava.web.settings',JSON.stringify({mode:'both',dubVolume:0}));window.__hamavaBufferStarts=0;const start=AudioBufferSourceNode.prototype.start;AudioBufferSourceNode.prototype.start=function(...args){window.__hamavaBufferStarts++;return start.apply(this,args);};});
  await context.route('https://generativelanguage.googleapis.com/**',async route=>{
    if(route.request().method()==='GET'){
      await route.fulfill({json:{models:[
@@ -26,12 +26,12 @@ try{
    await route.fulfill({json:{status:'completed',steps:[{type:'model_output',content}]}});
  });
  const page=await context.newPage(),errors=[];page.on('pageerror',e=>{errors.push(e.message);console.log('ERROR',e.message);});page.on('console',m=>{if(m.type()==='error')console.log('CONSOLE',m.text().slice(0,500));});
- await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۵',{exact:false}).first().waitFor();assert.equal(await page.getByRole('link',{name:'کد منبع هم‌آوا در GitHub'}).getAttribute('href'),'https://github.com/mostafa5804/HamAva');
+ await page.goto(`http://127.0.0.1:${server.address().port}/HamAva/`);await page.waitForSelector('.key-ready');await page.getByText('نسخه ۱.۰.۶',{exact:false}).first().waitFor();assert.equal(await page.getByRole('link',{name:'کد منبع هم‌آوا در GitHub'}).getAttribute('href'),'https://github.com/mostafa5804/HamAva');
  await page.getByRole('button',{name:'تنظیمات'}).click();await page.getByRole('button',{name:'بررسی مدل‌های API Key'}).click();await page.getByText(/مدل دریافت شد/).waitFor();assert.equal(await page.locator('#ttsModel').getAttribute('list'),'tts-model-options');assert.ok(await page.locator('#tts-model-options option[value="gemini-3.8-flash-lite-tts"]').count());console.log('PASS model catalog discovery is available in settings');await page.getByRole('button',{name:'بستن تنظیمات'}).click();
  fs.writeFileSync(root+'/qa-source.wav',wav);await page.locator('input[type=file]').setInputFiles(root+'/qa-source.wav');
  await page.waitForFunction(()=>document.querySelector('video').readyState>=1).catch(async e=>{console.log(await page.locator('video').evaluate(v=>({src:v.src,state:v.readyState,error:v.error?.message})),await page.locator('body').innerText());throw e;});
  await page.locator('.desktop-translation-controls button').filter({hasText:'شروع ترجمه'}).click();
- await page.waitForSelector('.cue-row');await page.locator('.desktop-translation-controls button').filter({hasText:'پخش با ترجمه'}).click();
+ await page.waitForSelector('.cue-row');await page.locator('.desktop-translation-controls button').filter({hasText:'پخش با ترجمه'}).click();await page.waitForFunction(()=>window.__hamavaBufferStarts>0);assert.equal(await page.locator('.error-message').count(),0);
  await page.waitForSelector('.caption');assert.match(await page.locator('.caption').innerText(),/سلام دنیا/);console.log('PASS local prepared captions visible');
  await page.getByRole('button',{name:'مکث',exact:true}).click();
  for(const [label,extension] of [['SRT','srt'],['VTT','vtt'],['صدای دوبله','wav']]){

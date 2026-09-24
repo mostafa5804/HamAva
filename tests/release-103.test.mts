@@ -35,6 +35,15 @@ test('audio export refuses missing clips instead of silently producing a partial
   t.mock.method(globalThis,'fetch',async()=>new Response('',{status:404}));
   await assert.rejects(renderDubbingTrack({clips:[{start:0,end:1,url:'https://example.com/missing'}],duration:1,decodeAudio:async()=>{throw new Error('should not decode');}}),/بخش 1/);
 });
+test('audio export reads the retained clip Blob without depending on its temporary object URL', async () => {
+  const source=new Blob([new Uint8Array([1,2,3,4])],{type:'audio/wav'});
+  const calls:number[]=[];
+  const buffer={sampleRate:4,getChannelData:()=>new Float32Array([.1,.2,.3,.4])} as unknown as AudioBuffer;
+  const result=await renderDubbingTrack({clips:[{start:0,end:1,url:'blob:revoked',blob:source}],duration:1,decodeAudio:async data=>{calls.push(data.byteLength);return buffer;}});
+  assert.deepEqual(calls,[4]);
+  assert.equal(result.blob.type,'audio/wav');
+  assert.equal(result.seconds,1);
+});
 test('cancellation during decoding is preserved by audio export', async t => {
   const controller=new AbortController();
   t.mock.method(globalThis,'fetch',async()=>new Response(new Uint8Array(4)));

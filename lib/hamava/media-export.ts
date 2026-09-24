@@ -22,7 +22,7 @@ export function saveBlob(blob: Blob, filename: string): void {
 }
 
 export interface DubTrackRequest {
-  clips: { start: number; end: number; url: string }[];
+  clips: { start: number; end: number; url: string; blob?: Blob }[];
   duration: number;
   /** Decoder from the live engine or a temporary context. */
   decodeAudio: (buffer: ArrayBuffer) => Promise<AudioBuffer>;
@@ -42,9 +42,12 @@ export async function renderDubbingTrack(request: DubTrackRequest): Promise<{ bl
     request.signal?.throwIfAborted();
     const clip = request.clips[index];
     try {
-      const response = await fetch(clip.url, { signal: request.signal });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const buffer = await request.decodeAudio(await response.arrayBuffer());
+      const data = clip.blob ? await clip.blob.arrayBuffer() : await (async () => {
+        const response = await fetch(clip.url, { signal: request.signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return response.arrayBuffer();
+      })();
+      const buffer = await request.decodeAudio(data);
       timeline.push({
         start: clip.start,
         end: clip.end,

@@ -12,7 +12,7 @@ export function isValidApiKey(value: string): boolean {
   return value.length >= 12 && value.length <= 2048 && /^[\x21-\x7e]+$/.test(value);
 }
 export interface Cue { start: number; end: number; source: string; translation: string; speaker: string; voice: 'female' | 'male' | 'unknown'; }
-export interface AudioClip { start: number; end: number; url: string; duration: number; }
+export interface AudioClip { start: number; end: number; url: string; duration: number; blob?: Blob; }
 export const defaults: Settings = {
   mode: 'both', originalVolume: 25, dubVolume: 100, duck: true, bilingual: false,
   captionSize: 22, captionOpacity: 80, captionPosition: 'bottom', captionColor: '#ffffff', captionOffset: 0,

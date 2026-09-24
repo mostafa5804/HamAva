@@ -402,7 +402,7 @@ export async function prepareDubbing({cues,key,settings,signal,onProgress,decode
         wav={blob:new Blob([bytes],{type:mime}),duration:decoded.duration};
       }
       if(wav.duration/(g.end-g.start)>16) throw new Error('زمان صدای تولیدشده با ویدیو هماهنگ نیست. آماده‌سازی دوبله را دوباره امتحان کن.');
-      const clip={start:g.start,end:g.end,url:URL.createObjectURL(wav.blob),duration:wav.duration};
+      const clip={start:g.start,end:g.end,url:URL.createObjectURL(wav.blob),duration:wav.duration,blob:wav.blob};
       clips.push(clip);onClip?.(clip);
     }
     signal.throwIfAborted();return clips;

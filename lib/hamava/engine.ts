@@ -19,9 +19,11 @@ export class MediaEngine {
   liveDestination:MediaStreamAudioDestinationNode; liveRecorder?:MediaRecorder; finishing=false; turnFinished=false; cueTimer?:ReturnType<typeof setTimeout>; onRecorded?:(blob:Blob)=>void;
   recordingDestination:MediaStreamAudioDestinationNode; exportOriginal:GainNode; dubBus:GainNode;
   source?:MediaElementAudioSourceNode; worklet?:AudioWorkletNode; silent?:GainNode;
-  client?:LiveClient; audio:HTMLAudioElement; settings:Settings;
+  client?:LiveClient; settings:Settings;
   active=false; queued=0; nodes=new Set<AudioBufferSourceNode>(); generation=0;
-  clipUrl=''; clipEpoch=0; playBlocked=false; private workletLoaded=false;
+  clipUrl=''; clipEpoch=0; private workletLoaded=false;
+  private preparedBuffers=new Map<string,AudioBuffer>(); private preparedLoading=new Map<string,Promise<AudioBuffer>>();
+  private preparedNode?:AudioBufferSourceNode; private preparedStartTime=0; private preparedStartOffset=0; private preparedRate=1;
   onError:(e:unknown)=>void; onTalking:(value:boolean)=>void;
   constructor(settings:Settings,onError:(e:unknown)=>void,onTalking:(v:boolean)=>void) {
     this.ctx=new AudioContext();this.settings=settings;this.onError=onError;this.onTalking=onTalking;
@@ -31,14 +33,10 @@ export class MediaEngine {
     this.exportOriginal=this.ctx.createGain();this.exportOriginal.connect(this.recordingDestination);
     this.dubBus=this.ctx.createGain();this.dubBus.connect(this.dub);this.dubBus.connect(this.recordingDestination);
     this.liveDestination=this.ctx.createMediaStreamDestination();this.dubBus.connect(this.liveDestination);
-    this.audio=new Audio();this.audio.preload='auto';this.audio.preservesPitch=true;
-    this.ctx.createMediaElementSource(this.audio).connect(this.dubBus);
-    this.audio.onended=()=>this.onTalking(false);
-    this.audio.onerror=()=>this.onError(new Error('پخش صدای دوبله ممکن نشد. دوباره پخش را لمس کن.'));
     this.apply(settings);
   }
   recordingAudioTrack(){return this.recordingDestination.stream.getAudioTracks()[0];}
-  async resume(){this.playBlocked=false;await this.ctx.resume();}
+  async resume(){await this.ctx.resume();}
   async attach(video:HTMLVideoElement) {
     await this.resume();
     if(this.video===video)return;
@@ -53,7 +51,7 @@ export class MediaEngine {
     this.dub.gain.setTargetAtTime(s.mode==='subtitle'?0:s.dubVolume/100,t,.025);
   }
   clearSound(){
-    this.clipEpoch++;this.audio.pause();this.clipUrl='';
+    this.clipEpoch++;this.clipUrl='';this.preparedNode=undefined;
     for(const n of this.nodes){n.onended=null;try{n.stop();}catch{}}
     this.nodes.clear();this.queued=0;this.onTalking(false);this.apply(this.settings);
   }
@@ -122,16 +120,45 @@ export class MediaEngine {
     node.onended=()=>{this.nodes.delete(node);node.disconnect();if(!this.nodes.size){this.onTalking(false);this.apply(this.settings);}};
   }
   syncPrepared(clips:AudioClip[],time:number,playing:boolean){
-    if(this.playBlocked)return;
-    if(!playing||this.settings.mode==='subtitle'){if(!this.audio.paused)this.clearSound();return;}
+    if(!playing||this.settings.mode==='subtitle'){if(this.clipUrl)this.clearSound();return;}
     const c=clips.find(c=>time>=c.start&&time<c.end);
     if(!c){if(this.clipUrl)this.clearSound();return;}
     const rate=Math.max(.25,Math.min(16,c.duration/(c.end-c.start)));
     const target=Math.min(c.duration-.01,Math.max(0,(time-c.start)*rate));
     const changed=this.clipUrl!==c.url;
-    if(changed){this.audio.pause();this.clipEpoch++;this.clipUrl=c.url;this.audio.src=c.url;this.audio.playbackRate=rate;}
-    if(changed||Math.abs(this.audio.currentTime-target)>.4) this.audio.currentTime=target;
-    if(this.audio.paused){const epoch=this.clipEpoch;void this.audio.play().then(()=>{if(epoch===this.clipEpoch)this.onTalking(true);}).catch(e=>{if(epoch===this.clipEpoch&&e.name!=='AbortError'){this.playBlocked=true;this.clearSound();this.onError(new Error('برای اجازه پخش صدا، دکمه پخش زیر ویدیو را لمس کن.'));}});}
+    if(changed){
+      this.stopPreparedNode();this.clipEpoch++;this.clipUrl=c.url;
+      const epoch=this.clipEpoch;
+      void this.loadPreparedBuffer(c.url).then(buffer=>{
+        if(epoch!==this.clipEpoch||!this.video||this.video.paused)return;
+        const current=clips.find(clip=>clip.url===c.url&&this.video!.currentTime>=clip.start&&this.video!.currentTime<clip.end);
+        if(current)this.startPreparedClip(current,buffer,this.video.currentTime);
+      }).catch(error=>{
+        if(epoch===this.clipEpoch)this.onError(new Error('خواندن صدای دوبله برای پخش ممکن نشد.',{cause:error}));
+      });
+      return;
+    }
+    if(!this.preparedNode)return;
+    const elapsed=(this.ctx.currentTime-this.preparedStartTime)*this.preparedRate;
+    const expected=this.preparedStartOffset+elapsed;
+    if(Math.abs(expected-target)>.55||Math.abs(this.preparedRate-rate)>.01){
+      const buffer=this.preparedBuffers.get(c.url);if(buffer)this.startPreparedClip(c,buffer,time);
+    }
   }
-  dispose(){this.stopLive();this.audio.removeAttribute('src');this.audio.load();this.source?.disconnect();this.worklet?.disconnect();void this.ctx.close();}
+  private loadPreparedBuffer(url:string):Promise<AudioBuffer>{
+    const cached=this.preparedBuffers.get(url);if(cached)return Promise.resolve(cached);
+    const pending=this.preparedLoading.get(url);if(pending)return pending;
+    const request=fetch(url).then(response=>{if(!response.ok)throw new Error(`HTTP ${response.status}`);return response.arrayBuffer();}).then(data=>this.ctx.decodeAudioData(data)).then(buffer=>{this.preparedBuffers.set(url,buffer);while(this.preparedBuffers.size>8)this.preparedBuffers.delete(this.preparedBuffers.keys().next().value!);return buffer;}).finally(()=>this.preparedLoading.delete(url));
+    this.preparedLoading.set(url,request);return request;
+  }
+  private stopPreparedNode(){const node=this.preparedNode;if(!node)return;this.preparedNode=undefined;node.onended=null;this.nodes.delete(node);try{node.stop();}catch{}try{node.disconnect();}catch{}}
+  private startPreparedClip(clip:AudioClip,buffer:AudioBuffer,time:number){
+    this.stopPreparedNode();
+    const node=this.ctx.createBufferSource();node.buffer=buffer;node.playbackRate.value=Math.max(.25,Math.min(16,clip.duration/(clip.end-clip.start)));node.connect(this.dubBus);
+    const offset=Math.min(buffer.duration-.01,Math.max(0,(time-clip.start)*node.playbackRate.value));
+    this.preparedNode=node;this.preparedStartTime=this.ctx.currentTime;this.preparedStartOffset=offset;this.preparedRate=node.playbackRate.value;
+    this.nodes.add(node);node.onended=()=>{this.nodes.delete(node);node.disconnect();if(this.preparedNode===node){this.preparedNode=undefined;this.onTalking(false);this.apply(this.settings);}};
+    try{node.start(0,offset);this.onTalking(true);this.apply(this.settings,true);}catch(error){this.stopPreparedNode();this.onError(error);}
+  }
+  dispose(){this.stopLive();this.source?.disconnect();this.worklet?.disconnect();this.preparedBuffers.clear();this.preparedLoading.clear();void this.ctx.close();}
 }
