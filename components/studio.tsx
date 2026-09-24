@@ -23,7 +23,7 @@ import { fetchGeminiModels, modelsForUse, type GeminiApiModel, type GeminiModelU
 
 type Media = { kind:SourceKind; url:string; name:string; id?:string; revision:number; identity:string };
 type InstallPrompt = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>};
-const APP_VERSION = '۱.۰.۶';
+const APP_VERSION = '۱.۰.۷';
 
 function Range({label,value,min=0,max=100,step=1,suffix='٪',onChange,icon}:{label:string;value:number;min?:number;max?:number;step?:number;suffix?:string;onChange:(v:number)=>void;icon?:React.ReactNode}) {
   const id=label.replaceAll(' ','-');

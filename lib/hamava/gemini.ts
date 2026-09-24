@@ -305,7 +305,9 @@ function splitLongCue(cue:Cue):Cue[] {
   }).filter(item=>item.end>item.start);
 }
 const videoFallbackModel = 'gemini-3.5-flash-lite';
-const ttsFallbackModel = 'gemini-2.5-flash-preview-tts';
+// Keep the last known working TTS generation as the fallback for new model
+// availability or transient quota/service failures.
+const ttsFallbackModel = 'gemini-3.1-flash-tts-preview';
 export function usesStructuredTtsSchema(model: string): boolean {
   const match = /^gemini-(\d+)\.(\d+)-.*tts(?:-|$)/i.exec(model);
   return Boolean(match && (Number(match[1]) > 3 || (Number(match[1]) === 3 && Number(match[2]) >= 8)));
@@ -315,7 +317,9 @@ export function ttsRequestBody(model: string, text: string, seconds: number, voi
   if (usesStructuredTtsSchema(model)) {
     return {
       input:[{type:'user_input',content:[{type:'text',text,annotations:[{type:'speech_metadata',style:`Natural conversational intonation in Persian (fa-IR); speak briskly to fit about ${seconds.toFixed(1)} seconds.`}]}]}],
-      response_format:{type:'audio'},
+      // Gemini 3.8 defaults unary audio to WAV. Request headerless PCM so the
+      // existing PCM-to-WAV path never wraps a WAV file as sample data.
+      response_format:{type:'audio',mime_type:'audio/l16',sample_rate:24000},
       generation_config:speechConfig,
     };
   }
@@ -327,7 +331,11 @@ export function ttsRequestBody(model: string, text: string, seconds: number, voi
 }
 function canUseFallback(error: unknown, model: string, fallback: string) {
   const e = error as {name?:string;httpStatus?:number};
-  return e?.name === 'GeminiRequestError' && [429,500,502,503,504].includes(e.httpStatus || 0) && model !== fallback;
+  if(e?.name!=='GeminiRequestError'||model===fallback)return false;
+  const status=e.httpStatus||0;
+  if([404,429,500,502,503,504].includes(status))return true;
+  const message=String(error instanceof Error?error.message:'').toLowerCase();
+  return status===400&&/model/.test(message)&&/(not found|not supported|unsupported|unavailable|does not exist|unknown)/.test(message);
 }
 async function requestModel(key: string, body: Record<string, unknown> | ((model: string) => Record<string, unknown>), signal: AbortSignal, phase: string, model: string, fallback: string): Promise<Content[]> {
   const forModel = (target: string) => typeof body === 'function' ? body(target) : body;

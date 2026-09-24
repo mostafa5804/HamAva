@@ -70,7 +70,7 @@ test('TTS requests use verbatim transcript annotations for 3.8 and preserve the 
   assert.deepEqual(modern.input[0].content[0].text,'فقط متن فارسی');
   assert.equal(modern.input[0].content[0].annotations[0].type,'speech_metadata');
   assert.match(modern.input[0].content[0].annotations[0].style,/2\.5 seconds/);
-  assert.deepEqual(modern.response_format,{type:'audio'});
+  assert.deepEqual(modern.response_format,{type:'audio',mime_type:'audio/l16',sample_rate:24000});
   const legacy=ttsRequestBody('gemini-3.1-flash-tts-preview','فقط متن فارسی',2.5,'Charon');
   assert.match(legacy.input,/Read ONLY/);assert.deepEqual(legacy.response_format,{type:'audio',sample_rate:24000});
 });
@@ -133,7 +133,7 @@ test('TTS fallback rebuilds the prompt for the fallback model schema',async()=>{
   };
   try{
     const clips=await prepareDubbing({cues:[cue],key:'dummy',settings:defaults,signal:new AbortController().signal,onProgress:()=>{},decodeAudio:()=>{throw new Error('PCM needs no decoder');}});
-    assert.equal(calls.length,2);assert.deepEqual(calls.map(x=>x.model),['gemini-3.8-flash-lite-tts','gemini-2.5-flash-preview-tts']);
+    assert.equal(calls.length,2);assert.deepEqual(calls.map(x=>x.model),['gemini-3.8-flash-lite-tts','gemini-3.1-flash-tts-preview']);
     assert.equal(calls[0].input[0].content[0].text,'سلام');assert.equal(typeof calls[1].input,'string');assert.match(calls[1].input,/Read ONLY/);
     clips.forEach(clip=>URL.revokeObjectURL(clip.url));
   }finally{globalThis.fetch=oldFetch;}
