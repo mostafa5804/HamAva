@@ -1,4 +1,5 @@
 import { appAsset } from './assets';
+import { fitToWindow, monoFromAudioBuffer } from './audio-mix';
 import { LiveClient } from './live-client.js';
 import { bytesBase64,decodePCM,pcmRate } from './shared.js';
 import type { Cue, Settings, AudioClip } from './types';
@@ -23,7 +24,7 @@ export class MediaEngine {
   active=false; queued=0; nodes=new Set<AudioBufferSourceNode>(); generation=0;
   clipUrl=''; clipEpoch=0; private workletLoaded=false;
   private preparedBuffers=new Map<string,AudioBuffer>(); private preparedLoading=new Map<string,Promise<AudioBuffer>>();
-  private preparedNode?:AudioBufferSourceNode; private preparedStartTime=0; private preparedStartOffset=0; private preparedRate=1;
+  private preparedNode?:AudioBufferSourceNode; private preparedStartTime=0; private preparedStartOffset=0;
   private preparedTime=0; private preparedPlaying=false;
   onError:(e:unknown)=>void; onTalking:(value:boolean)=>void;
   constructor(settings:Settings,onError:(e:unknown)=>void,onTalking:(v:boolean)=>void) {
@@ -128,13 +129,12 @@ export class MediaEngine {
     if(!playing||this.settings.mode==='subtitle'){if(this.clipUrl)this.clearSound();return;}
     const c=clips.find(c=>time>=c.start&&time<c.end);
     if(!c){if(this.clipUrl)this.clearSound();return;}
-    const rate=Math.max(.25,Math.min(16,c.duration/(c.end-c.start)));
-    const target=Math.min(c.duration-.01,Math.max(0,(time-c.start)*rate));
+    const target=Math.max(0,time-c.start);
     const changed=this.clipUrl!==c.url;
     if(changed){
       this.stopPreparedNode();this.clipEpoch++;this.clipUrl=c.url;
       const epoch=this.clipEpoch;
-      void this.loadPreparedBuffer(c.url).then(buffer=>{
+      void this.loadPreparedBuffer(c).then(buffer=>{
         if(epoch!==this.clipEpoch||!this.preparedPlaying)return;
         const current=clips.find(clip=>clip.url===c.url&&this.preparedTime>=clip.start&&this.preparedTime<clip.end);
         if(current)this.startPreparedClip(current,buffer,this.preparedTime);
@@ -144,24 +144,31 @@ export class MediaEngine {
       return;
     }
     if(!this.preparedNode)return;
-    const elapsed=(this.ctx.currentTime-this.preparedStartTime)*this.preparedRate;
+    const elapsed=this.ctx.currentTime-this.preparedStartTime;
     const expected=this.preparedStartOffset+elapsed;
-    if(Math.abs(expected-target)>.55||Math.abs(this.preparedRate-rate)>.01){
+    if(Math.abs(expected-target)>.55){
       const buffer=this.preparedBuffers.get(c.url);if(buffer)this.startPreparedClip(c,buffer,time);
     }
   }
-  private loadPreparedBuffer(url:string):Promise<AudioBuffer>{
+  private loadPreparedBuffer(clip:AudioClip):Promise<AudioBuffer>{
+    const {url}=clip;
     const cached=this.preparedBuffers.get(url);if(cached)return Promise.resolve(cached);
     const pending=this.preparedLoading.get(url);if(pending)return pending;
-    const request=fetch(url).then(response=>{if(!response.ok)throw new Error(`HTTP ${response.status}`);return response.arrayBuffer();}).then(data=>this.ctx.decodeAudioData(data)).then(buffer=>{this.preparedBuffers.set(url,buffer);while(this.preparedBuffers.size>8)this.preparedBuffers.delete(this.preparedBuffers.keys().next().value!);return buffer;}).finally(()=>this.preparedLoading.delete(url));
+    const request=fetch(url).then(response=>{if(!response.ok)throw new Error(`HTTP ${response.status}`);return response.arrayBuffer();}).then(data=>this.ctx.decodeAudioData(data)).then(decoded=>{
+      // Match the exported dub's cue timing without changing pitch. AudioBufferSourceNode.playbackRate
+      // changes pitch along with speed, so stretch the samples first and play at 1x.
+      const samples=fitToWindow(monoFromAudioBuffer(decoded),decoded.sampleRate,Math.max(.05,clip.end-clip.start),decoded.sampleRate);
+      const buffer=this.ctx.createBuffer(1,samples.length,decoded.sampleRate);buffer.getChannelData(0).set(samples);
+      this.preparedBuffers.set(url,buffer);while(this.preparedBuffers.size>8)this.preparedBuffers.delete(this.preparedBuffers.keys().next().value!);return buffer;
+    }).finally(()=>this.preparedLoading.delete(url));
     this.preparedLoading.set(url,request);return request;
   }
   private stopPreparedNode(){const node=this.preparedNode;if(!node)return;this.preparedNode=undefined;node.onended=null;this.nodes.delete(node);try{node.stop();}catch{}try{node.disconnect();}catch{}}
   private startPreparedClip(clip:AudioClip,buffer:AudioBuffer,time:number){
     this.stopPreparedNode();
-    const node=this.ctx.createBufferSource();node.buffer=buffer;node.playbackRate.value=Math.max(.25,Math.min(16,clip.duration/(clip.end-clip.start)));node.connect(this.dubBus);
-    const offset=Math.min(buffer.duration-.01,Math.max(0,(time-clip.start)*node.playbackRate.value));
-    this.preparedNode=node;this.preparedStartTime=this.ctx.currentTime;this.preparedStartOffset=offset;this.preparedRate=node.playbackRate.value;
+    const node=this.ctx.createBufferSource();node.buffer=buffer;node.playbackRate.value=1;node.connect(this.dubBus);
+    const offset=Math.min(buffer.duration-.01,Math.max(0,time-clip.start));
+    this.preparedNode=node;this.preparedStartTime=this.ctx.currentTime;this.preparedStartOffset=offset;
     this.nodes.add(node);node.onended=()=>{this.nodes.delete(node);node.disconnect();if(this.preparedNode===node){this.preparedNode=undefined;this.onTalking(false);this.apply(this.settings);}};
     try{node.start(0,offset);this.onTalking(true);this.apply(this.settings,true);}catch(error){this.stopPreparedNode();this.onError(error);}
   }
