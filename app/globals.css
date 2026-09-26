@@ -132,3 +132,5 @@ body {
 .model-catalog-note{margin-top:10px;padding:9px 11px;border:1px solid #d4e8df;border-radius:9px;background:#f0f8f4;color:#176a58;font-size:12px;line-height:1.8;overflow-wrap:anywhere}
 .model-access-note{font-size:12px}
 .model-field small{display:block;margin-top:5px;color:#73858e;font-size:11px;line-height:1.7}
+.model-field select{display:block;width:100%;min-height:44px;padding:9px 10px;border:1px solid #d8e3e8;border-radius:8px;background:#f7f9fa;color:#1c313b;font:12px ui-monospace,monospace;direction:ltr;text-align:left}
+.model-field .model-manual-label{margin-top:9px;font-size:12px;color:#647780}

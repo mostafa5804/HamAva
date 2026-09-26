@@ -23,7 +23,7 @@ import { fetchGeminiModels, modelsForUse, type GeminiApiModel, type GeminiModelU
 
 type Media = { kind:SourceKind; url:string; name:string; id?:string; revision:number; identity:string };
 type InstallPrompt = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>};
-const APP_VERSION = '۱.۰.۹';
+const APP_VERSION = '۱.۰.۱۰';
 
 function Range({label,value,min=0,max=100,step=1,suffix='٪',onChange,icon}:{label:string;value:number;min?:number;max?:number;step?:number;suffix?:string;onChange:(v:number)=>void;icon?:React.ReactNode}) {
   const id=label.replaceAll(' ','-');
@@ -281,6 +281,11 @@ export default function Studio(){
     finally{setLoadingModels(false);}
   }
   function changeVoice(v:string){update({voice:v as Settings['voice']});if(clips.length){clearPrepared();setStatus('captions');setNotice('برای اعمال صدای جدید، دوبله را دوباره آماده کن.');}}
+  function changeModel(field:'model'|'videoModel'|'ttsModel',value:string){
+    if(value===settings[field])return;
+    stopLive();update({[field]:value});
+    if(field!=='model'){clearPrepared();setCues([]);setStatus('idle');setNotice('مدل تغییر کرد؛ برای استفاده از مدل جدید ترجمه را دوباره آماده کن.');}
+  }
   function stopRecording(){if(recorder.current?.state==='recording'){video.current?.pause();recorder.current.stop();}}
   async function recordDubbedVideo(){
     if(!media||media.kind==='youtube'||!video.current)return;
@@ -429,18 +434,21 @@ export default function Studio(){
             ['ttsModel','ساخت صدای فارسی','tts'],
           ] as const).map(([field,label,use])=>{
             const options=modelsForUse(modelCatalog,use as GeminiModelUse);
-            const listId=`${use}-model-options`;
+            const selectedPresent=options.some(model=>model.id===settings[field]);
             return <div className="model-field" key={field}>
-              <label htmlFor={field}>{label}</label>
-              <input id={field} list={listId} dir="ltr" autoComplete="off" spellCheck={false} defaultValue={settings[field]} key={`${field}:${settings[field]}`} disabled={preparing||recording} onBlur={e=>{
+              <label htmlFor={`${field}-picker`}>{label}</label>
+              <select id={`${field}-picker`} aria-label={label} dir="ltr" value={settings[field]} disabled={preparing||recording} onChange={e=>changeModel(field,e.target.value)}>
+                {!selectedPresent&&<option value={settings[field]}>{settings[field]} · مدل فعلی</option>}
+                {options.map(model=><option value={model.id} key={model.id}>{model.displayName} · {model.id}</option>)}
+              </select>
+              <label className="model-manual-label" htmlFor={`${field}-manual`}>شناسهٔ دستی مدل</label>
+              <input id={`${field}-manual`} dir="ltr" autoComplete="off" spellCheck={false} defaultValue={settings[field]} key={`${field}:${settings[field]}`} disabled={preparing||recording} onBlur={e=>{
                 if(e.target.value!==settings[field]){
                   if(!/^[a-z0-9.-]{4,100}$/i.test(e.target.value)){e.target.value=settings[field];return;}
-                  stopLive();update({[field]:e.target.value});
-                  if(field!=='model'){clearPrepared();setCues([]);setStatus('idle');}
+                  changeModel(field,e.target.value);
                 }
               }}/>
-              <datalist id={listId}>{options.map(model=><option value={model.id} label={model.displayName} key={model.id}/>)}</datalist>
-              <small>{options.length?`${options.length.toLocaleString('fa-IR')} مدل از فهرست API برای این کاربرد پیدا شد.`:'برای دیدن گزینه‌ها «بررسی مدل‌های API Key» را بزن؛ شناسهٔ دستی هم پذیرفته می‌شود.'}</small>
+              <small>{options.length?`${options.length.toLocaleString('fa-IR')} مدل واجد این کاربرد در فهرست API است؛ برای دیدن همهٔ گزینه‌ها منو را باز کن.`:'مدل واجد این کاربرد در فهرست API پیدا نشد؛ می‌توانی شناسهٔ مدل را دستی وارد کنی.'}</small>
             </div>;
           })}
           <p className="hint">حفظ لحن در ترجمه همزمان تقریبی است و ممکن است بین گوینده‌ها تغییر کند.</p>

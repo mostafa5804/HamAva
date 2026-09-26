@@ -24,7 +24,7 @@ export class MediaEngine {
   active=false; queued=0; nodes=new Set<AudioBufferSourceNode>(); generation=0;
   clipUrl=''; clipEpoch=0; private workletLoaded=false;
   private preparedBuffers=new Map<string,AudioBuffer>(); private preparedLoading=new Map<string,Promise<AudioBuffer>>();
-  private preparedNode?:AudioBufferSourceNode; private preparedStartTime=0; private preparedStartOffset=0;
+  private preparedNode?:AudioBufferSourceNode;
   private preparedTime=0; private preparedPlaying=false;
   onError:(e:unknown)=>void; onTalking:(value:boolean)=>void;
   constructor(settings:Settings,onError:(e:unknown)=>void,onTalking:(v:boolean)=>void) {
@@ -129,7 +129,6 @@ export class MediaEngine {
     if(!playing||this.settings.mode==='subtitle'){if(this.clipUrl)this.clearSound();return;}
     const c=clips.find(c=>time>=c.start&&time<c.end);
     if(!c){if(this.clipUrl)this.clearSound();return;}
-    const target=Math.max(0,time-c.start);
     const changed=this.clipUrl!==c.url;
     if(changed){
       this.stopPreparedNode();this.clipEpoch++;this.clipUrl=c.url;
@@ -144,11 +143,10 @@ export class MediaEngine {
       return;
     }
     if(!this.preparedNode)return;
-    const elapsed=this.ctx.currentTime-this.preparedStartTime;
-    const expected=this.preparedStartOffset+elapsed;
-    if(Math.abs(expected-target)>.55){
-      const buffer=this.preparedBuffers.get(c.url);if(buffer)this.startPreparedClip(c,buffer,time);
-    }
+    // Do not restart a playing source to chase small clock differences. The old
+    // elapsed-time comparison treated YouTube's coarse time reports and browser
+    // scheduling jitter as drift, stopping and resuming the buffer mid-word. A
+    // real seek/pause already clears the sound through the player event handlers.
   }
   private loadPreparedBuffer(clip:AudioClip):Promise<AudioBuffer>{
     const {url}=clip;
@@ -168,7 +166,7 @@ export class MediaEngine {
     this.stopPreparedNode();
     const node=this.ctx.createBufferSource();node.buffer=buffer;node.playbackRate.value=1;node.connect(this.dubBus);
     const offset=Math.min(buffer.duration-.01,Math.max(0,time-clip.start));
-    this.preparedNode=node;this.preparedStartTime=this.ctx.currentTime;this.preparedStartOffset=offset;
+    this.preparedNode=node;
     this.nodes.add(node);node.onended=()=>{this.nodes.delete(node);node.disconnect();if(this.preparedNode===node){this.preparedNode=undefined;this.onTalking(false);this.apply(this.settings);}};
     try{node.start(0,offset);this.onTalking(true);this.apply(this.settings,true);}catch(error){this.stopPreparedNode();this.onError(error);}
   }
