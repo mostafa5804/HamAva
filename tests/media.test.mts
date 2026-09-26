@@ -144,10 +144,14 @@ test('collectCues tolerates a partial continuation answer', () => {
 
 test('translateMedia analyses a small file in one pass with real timestamps', async t => {
   const body = JSON.stringify({ complete: true, cues: [{ ...cue, start: 1, end: 3 }, { ...cue, start: 3.5, end: 6 }] });
-  t.mock.method(globalThis, 'fetch', async () => Response.json({
+  let requestBody: Record<string, unknown> | undefined;
+  t.mock.method(globalThis, 'fetch', async (_url: unknown, options?: { body?: unknown }) => {
+    requestBody = JSON.parse(String(options?.body));
+    return Response.json({
     steps: [{ type: 'model_output', content: [{ type: 'text', text: body }] }],
     status: 'completed',
-  }));
+    });
+  });
   const file = new Blob([new Uint8Array(1024)], { type: 'video/mp4' });
   const progress: string[] = [];
   const cues = await translateMedia({
@@ -162,6 +166,11 @@ test('translateMedia analyses a small file in one pass with real timestamps', as
   assert.equal(calls, 1);
   assert.equal(cues.length, 2);
   assert.equal(cues[0].start, 1);
+  const mediaPart = (requestBody?.input as Record<string, unknown>[])[0];
+  assert.equal(mediaPart.type, 'video');
+  assert.equal(mediaPart.mime_type, 'video/mp4');
+  assert.equal(typeof mediaPart.data, 'string');
+  assert.equal('inline' in mediaPart, false, 'Interactions API file data and MIME type must be top-level fields');
   assert.ok(progress[0].includes('ترجمه'));
 });
 
@@ -211,4 +220,3 @@ test('translateMedia refuses oversized files with a human message instead of an 
   );
   assert.equal(calls, 0, 'no billable request may be sent for a known-oversized file');
 });
-

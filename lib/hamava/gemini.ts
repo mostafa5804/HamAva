@@ -97,7 +97,10 @@ function mediaWindowPrompt(from: number, to: number, kind: MediaProbe['kind'], c
 function mediaPart(source: MediaSourceInput, payload: { data: string; mime_type: string }) {
   return {
     type: source.probe.kind === 'audio' ? 'audio' : 'video',
-    inline: { data: payload.data, mime_type: payload.mime_type },
+    // Interactions API media content uses top-level `data` and `mime_type`.
+    // `inline` is not a recognized field here (it belongs to other API shapes).
+    data: payload.data,
+    mime_type: payload.mime_type,
   };
 }
 
