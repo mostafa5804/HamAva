@@ -23,7 +23,23 @@ import { fetchGeminiModels, modelsForUse, type GeminiApiModel, type GeminiModelU
 
 type Media = { kind:SourceKind; url:string; name:string; id?:string; revision:number; identity:string };
 type InstallPrompt = Event & {prompt:()=>Promise<void>;userChoice:Promise<{outcome:string}>};
-const APP_VERSION = '۱.۰.۱۱';
+const APP_VERSION = '۱.۱.۰';
+
+function drawBurnedCaption(ctx:CanvasRenderingContext2D,text:string,width:number,height:number){
+  const fontSize=Math.max(17,Math.round(height*.045)),lineHeight=Math.round(fontSize*1.42),maxWidth=width*.9;
+  ctx.save();ctx.direction='rtl';ctx.textAlign='center';ctx.textBaseline='top';ctx.font=`600 ${fontSize}px Vazirmatn, sans-serif`;
+  const lines:string[]=[];let line='';
+  for(const word of text.split(/\s+/)){
+    const next=line?`${line} ${word}`:word;
+    if(line&&ctx.measureText(next).width>maxWidth-36){lines.push(line);line=word;}else line=next;
+  }
+  if(line)lines.push(line);
+  const visible=lines.slice(0,3);if(lines.length>3)visible[2]=`${visible[2].slice(0,Math.max(1,visible[2].length-1))}…`;
+  const boxWidth=Math.min(maxWidth,Math.max(...visible.map(value=>ctx.measureText(value).width),fontSize)+32),boxHeight=visible.length*lineHeight+20;
+  const x=(width-boxWidth)/2,y=height-boxHeight-Math.max(18,height*.055);
+  ctx.fillStyle='rgba(0,0,0,.76)';ctx.fillRect(x,y,boxWidth,boxHeight);ctx.fillStyle='#fff';
+  visible.forEach((value,index)=>ctx.fillText(value,width/2,y+10+index*lineHeight,maxWidth-24));ctx.restore();
+}
 
 function Range({label,value,min=0,max=100,step=1,suffix='٪',onChange,icon}:{label:string;value:number;min?:number;max?:number;step?:number;suffix?:string;onChange:(v:number)=>void;icon?:React.ReactNode}) {
   const id=label.replaceAll(' ','-');
@@ -55,6 +71,7 @@ export default function Studio(){
   const [preparing,setPreparing]=useState(false),[progress,setProgress]=useState(0),[progressLabel,setProgressLabel]=useState(''),[partialReady,setPartialReady]=useState(false);
   const [cues,setCues]=useState<Cue[]>([]),[clips,setClips]=useState<AudioClip[]>([]),[liveCaption,setLiveCaption]=useState<Cue|null>(null),[translationEnabled,setTranslationEnabled]=useState(false),[recording,setRecording]=useState(false),[recordedUrl,setRecordedUrl]=useState(''),[exportingAudio,setExportingAudio]=useState(false);
   const [liveAudioUrl,setLiveAudioUrl]=useState(''),[liveAudioExt,setLiveAudioExt]=useState('webm');
+  const [videoExportMode,setVideoExportMode]=useState<'dub'|'subtitle'|'both'>('both');
   const liveAudioUrlRef=useRef('');
   const [installPrompt,setInstallPrompt]=useState<InstallPrompt|null>(null);
   const video=useRef<HTMLVideoElement>(null),stage=useRef<HTMLDivElement>(null),ytHost=useRef<HTMLDivElement>(null),file=useRef<HTMLInputElement>(null);
@@ -287,16 +304,24 @@ export default function Studio(){
     if(field!=='model'){clearPrepared();setCues([]);setStatus('idle');setNotice('مدل تغییر کرد؛ برای استفاده از مدل جدید ترجمه را دوباره آماده کن.');}
   }
   function stopRecording(){if(recorder.current?.state==='recording'){video.current?.pause();recorder.current.stop();}}
+  function onVideoEnded(){
+    setPlaying(false);
+    if(recorder.current?.state==='recording')void engine.current?.waitForPreparedAudio().finally(()=>{if(recorder.current?.state==='recording')recorder.current.stop();});
+    if(recorder.current?.state==='recording')return;
+    if(video.current?.ended&&liveEnabled.current){const own=epoch.current;void engine.current?.finishLive().then(()=>{if(own===epoch.current)stopLive();});}
+  }
   async function recordDubbedVideo(){
     if(!media||media.kind==='youtube'||!video.current)return;
-    if(!clips.length){setNotice('اول دوبله را آماده کن؛ خروجی ویدیو از همان صدای آماده ساخته می‌شود.');return;}
+    const includeDub=videoExportMode!=='subtitle',includeSubtitles=videoExportMode!=='dub';
+    if(!cues.length){setNotice('اول ترجمه را آماده کن.');return;}
+    if(includeDub&&!clips.length){setNotice('برای خروجی دوبله، اول صدای دوبله را آماده کن.');return;}
     if(typeof MediaRecorder==='undefined'){setError('این مرورگر ضبط ویدیو را پشتیبانی نمی‌کند؛ خروجی WAV و زیرنویس را دانلود کن.');return;}
-    const own=epoch.current;let stream:MediaStream|undefined;
+    const own=epoch.current;let stream:MediaStream|undefined,frameRequest=0,drawActive=false;let audioEngine:MediaEngine|undefined;
     try{
       stopLive();video.current.pause();
-      const e=ensureEngine();await e.attach(video.current);
+      const e=ensureEngine();audioEngine=e;await e.attach(video.current);
       if(own!==epoch.current)return;
-      const source=video.current as HTMLVideoElement & {captureStream?:()=>MediaStream};
+      const source=video.current;
       source.currentTime=0;setTime(0);
       if(source.seeking)await new Promise<void>((resolve,reject)=>{
         const done=()=>{clearTimeout(timer);source.removeEventListener('seeked',done);resolve();};
@@ -304,28 +329,34 @@ export default function Studio(){
         source.addEventListener('seeked',done,{once:true});
       });
       if(own!==epoch.current)return;
-      const capture=source.captureStream?.();
-      if(!capture||!capture.getVideoTracks().length)throw new Error('ضبط تصویر در این مرورگر یا برای این فایل ممکن نیست؛ خروجی WAV و زیرنویس را دانلود کن.');
-      stream=new MediaStream(capture.getVideoTracks().map(track=>track.clone()));
+      if(!source.videoWidth||!source.videoHeight)throw new Error('این فایل تصویر ویدیویی ندارد؛ برایش زیرنویس یا صدای دوبله جداگانه دانلود کن.');
+      const canvas=document.createElement('canvas');canvas.width=source.videoWidth;canvas.height=source.videoHeight;
+      const context=canvas.getContext('2d');if(!context)throw new Error('ساخت تصویر خروجی در این مرورگر ممکن نشد.');
+      if(typeof canvas.captureStream!=='function')throw new Error('این مرورگر خروجی ویدیویی همراه زیرنویس را پشتیبانی نمی‌کند. از Chrome یا Kiwi به‌روز استفاده کن.');
+      const exportSettings:Settings=includeDub?{...settingsRef.current,mode:'both',dubVolume:100,duck:false}:{...settingsRef.current,mode:'subtitle',originalVolume:100,dubVolume:0,duck:false};
+      e.apply(exportSettings);
+      stream=canvas.captureStream(30);
       const audio=e.recordingAudioTrack();if(audio)stream.addTrack(audio.clone());
       const mime=['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'].find(type=>MediaRecorder.isTypeSupported(type));
       if(!mime)throw new Error('مرورگر خروجی ویدیویی WebM را پشتیبانی نمی‌کند.');
       recordedChunks.current=[];let bytes=0;let limited=false;let failed=false;
       const tracks=stream.getTracks();
       const r=new MediaRecorder(stream,{mimeType:mime,videoBitsPerSecond:4_000_000});recorder.current=r;
+      const paint=()=>{if(!drawActive)return;context.drawImage(source,0,0,canvas.width,canvas.height);if(includeSubtitles){const t=source.currentTime;const cue=cuesRef.current.find(item=>t>=item.start+settingsRef.current.captionOffset&&t<item.end+settingsRef.current.captionOffset)||(source.ended?cuesRef.current.at(-1):null);if(cue)drawBurnedCaption(context,cue.translation,canvas.width,canvas.height);}frameRequest=requestAnimationFrame(paint);};
+      drawActive=true;paint();
       r.ondataavailable=event=>{if(!event.data.size)return;recordedChunks.current.push(event.data);bytes+=event.data.size;if(bytes>=64*1024*1024&&r.state==='recording'){limited=true;source.pause();r.stop();}};
       r.onerror=()=>{failed=true;setRecording(false);setError('ساخت فایل ویدیویی متوقف شد. خروجی ناقص را دوباره بساز.');};
       r.onstop=()=>{
-        tracks.forEach(track=>track.stop());const output=new Blob(recordedChunks.current,{type:mime});recordedChunks.current=[];
+        drawActive=false;cancelAnimationFrame(frameRequest);tracks.forEach(track=>track.stop());e.apply(settingsRef.current,talking);const output=new Blob(recordedChunks.current,{type:mime});recordedChunks.current=[];
         if(recorder.current===r){recorder.current=null;setRecording(false);}
         if(failed||own!==epoch.current||!output.size)return;
         if(recordedUrlRef.current)URL.revokeObjectURL(recordedUrlRef.current);
         const u=URL.createObjectURL(output);recordedUrlRef.current=u;setRecordedUrl(u);
-        setNotice(limited?'ضبط در سقف ۶۴ مگابایت متوقف شد؛ فایل این بخش قابل دانلود است.':source.ended?'فایل ویدیوی دوبله‌شده آماده دانلود است.':'ضبط پیش از پایان ویدیو متوقف شد؛ بخش ضبط‌شده قابل دانلود است.');
+        setNotice(limited?'ضبط در سقف ۶۴ مگابایت متوقف شد؛ فایل این بخش قابل دانلود است.':source.ended?'فایل ویدیوی انتخاب‌شده آماده دانلود است.':'ضبط پیش از پایان ویدیو متوقف شد؛ بخش ضبط‌شده قابل دانلود است.');
         void saveVideo(output).catch(()=>setNotice('ویدیو آماده دانلود است، اما ذخیره مرورگر جا ندارد؛ همین حالا دانلود کن.'));
       };
       setRecording(true);r.start(1000);await source.play();
-    }catch(error){if(recorder.current?.state==='recording')recorder.current.stop();stream?.getTracks().forEach(track=>track.stop());setRecording(false);report(error);}
+    }catch(error){drawActive=false;cancelAnimationFrame(frameRequest);if(recorder.current?.state==='recording')recorder.current.stop();stream?.getTracks().forEach(track=>track.stop());audioEngine?.apply(settingsRef.current,talking);setRecording(false);report(error);}
   }
   function download(format:'srt'|'vtt'='srt'){
     const content=exportCaptions(cues,{format,bilingual:settings.bilingual,offset:settings.captionOffset});
@@ -385,7 +416,7 @@ export default function Studio(){
 
       <section className="viewing-column">
         <div className="player-card"><div className="stage" ref={stage}>
-          <video ref={video} src={!youtube?media?.url:undefined} crossOrigin="anonymous" playsInline preload="metadata" className={media&&!youtube?'':'hidden'} onLoadedMetadata={()=>{setDuration(video.current?.duration||0);setMediaReady(true);if(video.current&&!engine.current?.source)video.current.volume=settingsRef.current.mode==='subtitle'?1:settingsRef.current.originalVolume/100;}} onTimeUpdate={()=>{if(!dragging.current)setTime(video.current?.currentTime||0);const v=video.current;if(v)engine.current?.syncPrepared(clipsRef.current,v.currentTime,!v.paused);}} onPlay={()=>{setPlaying(true);if(liveEnabled.current&&!engine.current?.active)void beginLive();}} onPause={onPause} onSeeking={onSeek} onSeeked={onSeeked} onEnded={()=>{setPlaying(false);if(recorder.current?.state==='recording')recorder.current.stop();const own=epoch.current;void engine.current?.finishLive().then(()=>{if(own===epoch.current)stopLive();});}} onError={()=>{if(mediaRef.current?.kind!=='youtube'&&mediaRef.current){setMediaReady(false);stopLive();setError(mediaRef.current.kind==='url'?'ویدیو باز نشد. لینک باید مستقیم، قابل پخش و دارای مجوز CORS باشد. می‌توانی فایل را دانلود و از بخش فایل وارد کنی.':'این فرمت در مرورگر قابل پخش نیست. نسخه MP4 با کدک H.264 یا WebM را امتحان کن.');}}}/>
+          <video ref={video} src={!youtube?media?.url:undefined} crossOrigin="anonymous" playsInline preload="metadata" className={media&&!youtube?'':'hidden'} onLoadedMetadata={()=>{setDuration(video.current?.duration||0);setMediaReady(true);if(video.current&&!engine.current?.source)video.current.volume=settingsRef.current.mode==='subtitle'?1:settingsRef.current.originalVolume/100;}} onTimeUpdate={()=>{if(!dragging.current)setTime(video.current?.currentTime||0);const v=video.current;if(v)engine.current?.syncPrepared(clipsRef.current,v.currentTime,!v.paused);}} onPlay={()=>{setPlaying(true);if(liveEnabled.current&&!engine.current?.active)void beginLive();}} onPause={onPause} onSeeking={onSeek} onSeeked={onSeeked} onEnded={onVideoEnded} onError={()=>{if(mediaRef.current?.kind!=='youtube'&&mediaRef.current){setMediaReady(false);stopLive();setError(mediaRef.current.kind==='url'?'ویدیو باز نشد. لینک باید مستقیم، قابل پخش و دارای مجوز CORS باشد. می‌توانی فایل را دانلود و از بخش فایل وارد کنی.':'این فرمت در مرورگر قابل پخش نیست. نسخه MP4 با کدک H.264 یا WebM را امتحان کن.');}}}/>
           <div ref={ytHost} className={`youtube-host ${youtube?'':'hidden'}`}/>
           {!media&&<Empty className="player-empty"><EmptyHeader><EmptyMedia><AudioLines size={48} strokeWidth={1.2}/></EmptyMedia><EmptyTitle>از اینجا، فارسی ببین.</EmptyTitle><EmptyDescription>یک فایل یا لینک انتخاب کن تا شروع کنیم</EmptyDescription></EmptyHeader><div className="empty-tags"><span><Subtitles size={15}/>زیرنویس</span><span><Mic2 size={15}/>دوبله فارسی</span></div></Empty>}
           {!!media&&!youtube&&!playing&&<button className="stage-play" disabled={!mediaReady||status==='connecting'} onClick={togglePlay} aria-label="پخش ویدیو"><Play size={28} fill="currentColor"/></button>}
@@ -406,7 +437,7 @@ export default function Studio(){
           <div className="desktop-translation-controls"><TranslationControls {...translationControls}/></div>
           {!key?<button className="key-reminder" onClick={()=>setSheet(true)}><KeyRound size={16}/>کلید Gemini را در تنظیمات وارد کن<ChevronLeft size={14}/></button>:<div className="key-ready"><Check size={14}/>کلید شخصی وارد شده است</div>}
           {ready&&!preparing&&<button className="text-button redo" onClick={()=>{clearPrepared();setCues([]);setStatus('idle');setNotice('برای ترجمه دوباره، آماده‌سازی را بزن.');}}><RotateCcw size={14}/>آماده‌سازی دوباره</button>}
-          {!youtube&&media&&<div className="export-actions card"><div><strong>خروجی ویدیوی دوبله</strong><small>خروجی WebM از دوبله آماده، با صدای اصلی ۲۵٪ و دوبله کامل ساخته می‌شود؛ ولوم شنیدن روی فایل اثر ندارد. صفحه را باز نگه دار. سقف هر ضبط ۶۴ مگابایت است.</small></div>{recordedUrl?<a className="primary-button" href={recordedUrl} download="HamAva-dubbed.webm"><Download size={17}/>دانلود ویدیوی دوبله</a>:<button className="outline-button" disabled={!mediaReady||!clips.length||preparing||recording||settings.mode==='subtitle'} onClick={()=>{void recordDubbedVideo();}}>{recording?'در حال ضبط…':'ساخت خروجی دوبله'}</button>}<button className="outline-button" disabled={exportingAudio||preparing||!clips.length} onClick={()=>{void downloadDubAudio();}}><AudioLines size={17}/>صدای دوبله</button>{recording&&<button className="text-button" onClick={stopRecording}>توقف و آماده‌سازی فایل</button>}</div>}
+          {!youtube&&media&&<div className="export-actions card"><div><strong>خروجی ویدیویی</strong><small>زیرنویس فارسی روی تصویر درج می‌شود. دوبله با سرعت طبیعی خودش پخش می‌شود؛ اگر جمله‌ای از بازهٔ زیرنویس بلندتر باشد، ممکن است کمی با جملهٔ بعدی هم‌پوشانی کند. صفحه را تا پایان ضبط باز نگه دار؛ سقف فایل ۶۴ مگابایت است.</small></div><Choice label="محتوای خروجی" value={videoExportMode} disabled={preparing||recording} onChange={v=>setVideoExportMode(v as 'dub'|'subtitle'|'both')} items={[["dub","فقط دوبله"],["subtitle","فقط زیرنویس"],["both","دوبله و زیرنویس"]]}/>{recordedUrl?<a className="primary-button" href={recordedUrl} download="HamAva-output.webm"><Download size={17}/>دانلود ویدیوی خروجی</a>:<button className="outline-button" disabled={!mediaReady||!cues.length||(videoExportMode!=='subtitle'&&!clips.length)||preparing||recording} onClick={()=>{void recordDubbedVideo();}}>{recording?'در حال ضبط…':'ساخت ویدیوی خروجی'}</button>}<button className="outline-button" disabled={exportingAudio||preparing||!clips.length} onClick={()=>{void downloadDubAudio();}}><AudioLines size={17}/>صدای دوبله</button>{recording&&<button className="text-button" onClick={stopRecording}>توقف و آماده‌سازی فایل</button>}</div>}
           {youtube&&media&&<div className="export-actions card"><div><strong>خروجی دوبله یوتیوب</strong><small>مرورگر اجازه ضبط تصویر یوتیوب را نمی‌دهد؛ صدای دوبله و زیرنویس را دانلود کن و روی ویدیوی اصلی در یک ویرایشگر میکس کن.</small></div><button className="outline-button" disabled={exportingAudio||preparing||!clips.length} onClick={()=>{void downloadDubAudio();}}><AudioLines size={17}/>دانلود صدای دوبله</button></div>}
           <p className="usage-note">{youtube?'یوتیوب باید یک‌بار کامل تحلیل شود؛ برای کمترین تأخیر از فایل یا لینک مستقیم استفاده کن.':'فایل با تحلیل کامل ترجمه می‌شود و زمان‌بندی روی صدای واقعی تنظیم می‌شود؛ صفحه را هنگام آماده‌سازی باز نگه دار.'}</p>
         </section>

@@ -112,7 +112,7 @@ test('syncCuesToAudio shifts a late transcript onto the measured speech', () => 
   assert.equal(unrelated.measured, false);
 });
 
-test('the offline mixer places clips at their cues and fits them to the window', () => {
+test('the offline mixer keeps a constant natural tempo after cue boundaries', () => {
   const tone = (rate: number, seconds: number, value = 0.5) => new Float32Array(Math.round(rate * seconds)).fill(value);
   const mixed = mixClipsOnTimeline([
     { start: 1, end: 3, samples: tone(1000, 4), sampleRate: 1000 },
@@ -121,7 +121,8 @@ test('the offline mixer places clips at their cues and fits them to the window',
   assert.equal(mixed.length, 6000);
   assert.equal(mixed[500], 0, 'silence before the first cue');
   assert.ok(Math.abs(mixed[1500] - 0.5) < 0.01);
-  assert.ok(Math.abs(mixed[4500] - 0.9) < 0.001, 'second clip lands at its own cue');
+  assert.ok(Math.abs(mixed[3500] - 0.5) < 0.01, 'the first utterance keeps playing at its natural rate after its subtitle cue ends');
+  assert.ok(Math.abs(mixed[4500] - 1) < 0.001, 'overlapping speech is mixed without changing either clip rate');
   const fitted = fitToWindow(tone(1000, 4), 1000, 2, 1000);
   assert.equal(fitted.length, 2000);
   assert.equal(fitted[1999], 0.5);

@@ -21,26 +21,22 @@ export interface TimelineClip {
 export interface MixOptions {
   duration: number;
   sampleRate?: number;
-  /** Safety margin so a slightly long clip never crosses into the next one. */
-  clipGapSeconds?: number;
 }
 
 /**
  * Place every clip at its cue position on a silent timeline.
  *
- * A clip is time-fitted to its cue window, exactly like playback does, so the
- * exported audio stays aligned with the video even when the synthesised speech
- * is longer or shorter than the original sentence.
+ * Generated speech keeps its natural duration and starts at the cue boundary.
+ * Per-cue time fitting made adjacent TTS chunks sound like they changed speed.
  */
 export function mixClipsOnTimeline(clips: TimelineClip[], options: MixOptions): Float32Array {
   const rate =
     options.sampleRate && Number.isFinite(options.sampleRate) && options.sampleRate > 0
       ? options.sampleRate
       : exportSampleRate;
-  const gap = Math.max(0, options.clipGapSeconds ?? 0.05);
   const duration = Number.isFinite(options.duration) && options.duration > 0 ? options.duration : 0;
   const valid = clips.filter(clip => Number.isFinite(clip.start) && Number.isFinite(clip.end) && clip.start >= 0 && clip.end > clip.start);
-  const longest = valid.reduce((end, clip) => Math.max(end, clip.end), 0);
+  const longest = valid.reduce((end, clip) => Math.max(end, clip.start + clip.samples.length / Math.max(1, clip.sampleRate)), 0);
   const length = Math.ceil(Math.max(duration, longest) * rate);
   if (length > rate * 60 * 60) throw new Error('خروجی صوتی بیش از یک ساعت است؛ برای جلوگیری از پرشدن حافظه، فایل را به بخش‌های کوتاه‌تر تقسیم کن.');
   const output = new Float32Array(Math.max(1, length));
@@ -49,14 +45,32 @@ export function mixClipsOnTimeline(clips: TimelineClip[], options: MixOptions): 
     .sort((a, b) => a.start - b.start);
   for (const clip of ordered) {
     const from = Math.max(0, Math.round(clip.start * rate));
-    const windowSeconds = Math.max(0.05, clip.end - clip.start - gap);
-    const fitted = fitToWindow(clip.samples, clip.sampleRate, windowSeconds, rate);
-    for (let index = 0; index < fitted.length; index++) {
+    const natural = resamplePCM(clip.samples, clip.sampleRate, rate);
+    for (let index = 0; index < natural.length; index++) {
       const at = from + index;
       if (at >= output.length) break;
-      // Overlapping clips are summed and limited to the PCM range.
-      output[at] = softLimit(output[at] + fitted[index]);
+      // Keep the generated tempo; mix any unavoidable overlap without clipping.
+      output[at] = softLimit(output[at] + natural[index]);
     }
+  }
+  return output;
+}
+
+/** Resample while preserving playback duration and pitch. */
+export function resamplePCM(samples: ArrayLike<number>, sourceRate: number, targetRate: number): Float32Array {
+  const source = Math.max(1, Number.isFinite(sourceRate) && sourceRate > 0 ? sourceRate : targetRate);
+  const target = Math.max(1, Number.isFinite(targetRate) && targetRate > 0 ? targetRate : source);
+  const length = Math.max(0, Math.round(samples.length * target / source));
+  if (source === target) return Float32Array.from(samples);
+  const output = new Float32Array(length);
+  for (let index = 0; index < length; index++) {
+    const position = index * source / target;
+    const left = Math.floor(position);
+    const right = Math.min(samples.length - 1, left + 1);
+    const fraction = position - left;
+    const a = Number(samples[left]) || 0;
+    const b = Number(samples[right]) || 0;
+    output[index] = a + (b - a) * fraction;
   }
   return output;
 }

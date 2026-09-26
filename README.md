@@ -21,7 +21,7 @@
 </p>
 
 <p align="center">
-  <img alt="Version 1.0.11" src="https://img.shields.io/badge/version-1.0.11-087b63?style=flat-square">
+  <img alt="Version 1.1.0" src="https://img.shields.io/badge/version-1.1.0-087b63?style=flat-square">
   <a href="https://github.com/mostafa5804/HamAva/actions/workflows/pages.yml">
     <img alt="GitHub Pages deployment" src="https://img.shields.io/github/actions/workflow/status/mostafa5804/HamAva/pages.yml?branch=main&label=GitHub%20Pages&logo=github">
   </a>
@@ -106,6 +106,8 @@ pnpm lint
 
 ## 🧪 نسخهٔ جاری
 
+**۱.۱.۰** — پخش دوبله با سرعت طبیعی و خروجی ویدیو با انتخاب دوبله، زیرنویس درج‌شده روی تصویر یا هردو.
+
 **۱.۰.۷** — درخواست PCM صریح از Gemini 3.8 برای جلوگیری از تفسیر WAV به‌عنوان PCM؛ اصلاح پخش دوبلهٔ آماده‌شده و خروجی صوتی.
 
 **۱.۰.۶** — پخش دوبلهٔ آماده‌شده از Web Audio برای سازگاری بهتر با سیاست پخش مرورگرهای موبایل؛ نگه‌داشتن Blob هر بخش برای خروجی صوتی تا دانلود به URL موقت وابسته نباشد.
@@ -118,5 +120,5 @@ pnpm lint
   <a href="https://github.com/mostafa5804/HamAva">
     <img alt="GitHub" src="https://img.shields.io/badge/ساخته%20شده%20با-GitHub-181717?style=flat-square&logo=github&logoColor=white">
   </a>
-  &nbsp; هم‌آوا · نسخهٔ ۱.۰.۷
+  &nbsp; هم‌آوا · نسخهٔ ۱.۱.۰
 </p>

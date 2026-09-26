@@ -1,5 +1,4 @@
 import { appAsset } from './assets';
-import { fitToWindow, monoFromAudioBuffer } from './audio-mix';
 import { LiveClient } from './live-client.js';
 import { bytesBase64,decodePCM,pcmRate } from './shared.js';
 import type { Cue, Settings, AudioClip } from './types';
@@ -24,7 +23,7 @@ export class MediaEngine {
   active=false; queued=0; nodes=new Set<AudioBufferSourceNode>(); generation=0;
   clipUrl=''; clipEpoch=0; private workletLoaded=false;
   private preparedBuffers=new Map<string,AudioBuffer>(); private preparedLoading=new Map<string,Promise<AudioBuffer>>();
-  private preparedNode?:AudioBufferSourceNode;
+  private preparedNodes=new Map<string,AudioBufferSourceNode>(); private preparedStarted=new Set<string>();
   private preparedTime=0; private preparedPlaying=false;
   onError:(e:unknown)=>void; onTalking:(value:boolean)=>void;
   constructor(settings:Settings,onError:(e:unknown)=>void,onTalking:(v:boolean)=>void) {
@@ -53,7 +52,7 @@ export class MediaEngine {
     this.dub.gain.setTargetAtTime(s.mode==='subtitle'?0:s.dubVolume/100,t,.025);
   }
   clearSound(){
-    this.clipEpoch++;this.clipUrl='';this.preparedNode=undefined;this.preparedPlaying=false;
+    this.clipEpoch++;this.clipUrl='';this.preparedPlaying=false;this.preparedNodes.clear();this.preparedStarted.clear();
     for(const n of this.nodes){n.onended=null;try{n.stop();}catch{}}
     this.nodes.clear();this.queued=0;this.onTalking(false);this.apply(this.settings);
   }
@@ -126,49 +125,45 @@ export class MediaEngine {
     // unset. Keep the latest playback state here and use it when async decoding
     // finishes; otherwise prepared YouTube clips are silently discarded.
     this.preparedTime=time;this.preparedPlaying=playing;
-    if(!playing||this.settings.mode==='subtitle'){if(this.clipUrl)this.clearSound();return;}
+    if(!playing||this.settings.mode==='subtitle'){if(this.clipUrl||this.preparedNodes.size)this.clearSound();return;}
     const c=clips.find(c=>time>=c.start&&time<c.end);
-    if(!c){if(this.clipUrl)this.clearSound();return;}
+    // Let each generated utterance finish naturally if it extends slightly
+    // beyond its source cue instead of cutting it off at the cue boundary.
+    if(!c){if(!this.preparedNodes.size)this.clipUrl='';return;}
     const changed=this.clipUrl!==c.url;
     if(changed){
-      this.stopPreparedNode();this.clipEpoch++;this.clipUrl=c.url;
+      this.clipEpoch++;this.clipUrl=c.url;
       const epoch=this.clipEpoch;
       void this.loadPreparedBuffer(c).then(buffer=>{
         if(epoch!==this.clipEpoch||!this.preparedPlaying)return;
         const current=clips.find(clip=>clip.url===c.url&&this.preparedTime>=clip.start&&this.preparedTime<clip.end);
-        if(current)this.startPreparedClip(current,buffer,this.preparedTime);
+        if(current&&!this.preparedStarted.has(c.url)){this.preparedStarted.add(c.url);this.startPreparedClip(current,buffer,this.preparedTime);}
       }).catch(error=>{
         if(epoch===this.clipEpoch)this.onError(new Error('خواندن صدای دوبله برای پخش ممکن نشد.',{cause:error}));
       });
-      return;
     }
-    if(!this.preparedNode)return;
-    // Do not restart a playing source to chase small clock differences. The old
-    // elapsed-time comparison treated YouTube's coarse time reports and browser
-    // scheduling jitter as drift, stopping and resuming the buffer mid-word. A
-    // real seek/pause already clears the sound through the player event handlers.
+    // Do not restart a source to chase clock jitter or reshape each utterance
+    // to its own cue length; both made the perceived speech speed vary.
   }
   private loadPreparedBuffer(clip:AudioClip):Promise<AudioBuffer>{
     const {url}=clip;
     const cached=this.preparedBuffers.get(url);if(cached)return Promise.resolve(cached);
     const pending=this.preparedLoading.get(url);if(pending)return pending;
     const request=fetch(url).then(response=>{if(!response.ok)throw new Error(`HTTP ${response.status}`);return response.arrayBuffer();}).then(data=>this.ctx.decodeAudioData(data)).then(decoded=>{
-      // Match the exported dub's cue timing without changing pitch. AudioBufferSourceNode.playbackRate
-      // changes pitch along with speed, so stretch the samples first and play at 1x.
-      const samples=fitToWindow(monoFromAudioBuffer(decoded),decoded.sampleRate,Math.max(.05,clip.end-clip.start),decoded.sampleRate);
-      const buffer=this.ctx.createBuffer(1,samples.length,decoded.sampleRate);buffer.getChannelData(0).set(samples);
-      this.preparedBuffers.set(url,buffer);while(this.preparedBuffers.size>8)this.preparedBuffers.delete(this.preparedBuffers.keys().next().value!);return buffer;
+      this.preparedBuffers.set(url,decoded);while(this.preparedBuffers.size>8)this.preparedBuffers.delete(this.preparedBuffers.keys().next().value!);return decoded;
     }).finally(()=>this.preparedLoading.delete(url));
     this.preparedLoading.set(url,request);return request;
   }
-  private stopPreparedNode(){const node=this.preparedNode;if(!node)return;this.preparedNode=undefined;node.onended=null;this.nodes.delete(node);try{node.stop();}catch{}try{node.disconnect();}catch{}}
   private startPreparedClip(clip:AudioClip,buffer:AudioBuffer,time:number){
-    this.stopPreparedNode();
     const node=this.ctx.createBufferSource();node.buffer=buffer;node.playbackRate.value=1;node.connect(this.dubBus);
     const offset=Math.min(buffer.duration-.01,Math.max(0,time-clip.start));
-    this.preparedNode=node;
-    this.nodes.add(node);node.onended=()=>{this.nodes.delete(node);node.disconnect();if(this.preparedNode===node){this.preparedNode=undefined;this.onTalking(false);this.apply(this.settings);}};
-    try{node.start(0,offset);this.onTalking(true);this.apply(this.settings,true);}catch(error){this.stopPreparedNode();this.onError(error);}
+    this.preparedNodes.set(clip.url,node);
+    this.nodes.add(node);node.onended=()=>{this.preparedNodes.delete(clip.url);this.nodes.delete(node);node.disconnect();if(!this.nodes.size){this.onTalking(false);this.apply(this.settings);}};
+    try{node.start(0,offset);this.onTalking(true);this.apply(this.settings,true);}catch(error){this.preparedNodes.delete(clip.url);this.nodes.delete(node);node.disconnect();if(!this.nodes.size){this.onTalking(false);this.apply(this.settings);}this.onError(error);}
+  }
+  async waitForPreparedAudio(timeoutMs=8000){
+    const deadline=Date.now()+Math.max(0,timeoutMs);
+    while(this.preparedNodes.size&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,50));
   }
   dispose(){this.stopLive();this.source?.disconnect();this.worklet?.disconnect();this.preparedBuffers.clear();this.preparedLoading.clear();void this.ctx.close();}
 }
